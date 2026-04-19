@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id          String    @id @default(cuid())
+  nombre      String
+  empresa     String
+  email       String    @unique
+  telefono    String?
+  instagram   String?
+  linkedin    String?
+  website     String?
+  estetica    String?
+  tonos       String?
+  notas       String?   @db.Text
+  pipeline    Pipeline  @default(Enviada)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  proyectos   Project[]
+  deals       Deal[]
+}
+
+model Deal {
+  id        String      @id @default(cuid())
+  titulo    String
+  valor     Float       @default(0)
+  status    DealStatus  @default(Enviada)
+  clientId  String
+  client    Client      @relation(fields: [clientId], references: [id])
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model Project {
+  id          String      @id @default(cuid())
+  titulo      String
+  cliente     String
+  fase        Phase       @default(CREATIVIDAD)
+  etapa       String      @default("Propuesta")
+  clientId    String?
+  client      Client?     @relation(fields: [clientId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  tareas      Task[]
+  facturas    Invoice[]
+  documentos  Document[]
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  titulo      String
+  responsable String?
+  fecha       String?
+  hecho       Boolean  @default(false)
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model Invoice {
+  id               String        @id @default(cuid())
+  numero           String        @unique
+  monto            Float
+  pagado           Float         @default(0)
+  status           InvoiceStatus @default(Pendiente)
+  fechaEmision     DateTime      @default(now())
+  fechaVencimiento DateTime
+  projectId        String
+  project          Project       @relation(fields: [projectId], references: [id])
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+
+model Document {
+  id        String   @id @default(cuid())
+  tipo      DocType
+  nombre    String
+  url       String?
+  estado    String   @default("Pendiente")
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+enum Pipeline {
+  Enviada
+  Negociando
+  Aprobada
+  Rechazada
+}
+
+enum DealStatus {
+  Enviada
+  Negociando
+  Aprobada
+  Rechazada
+}
+
+enum Phase {
+  CREATIVIDAD
+  PRE
+  PRO
+  POST
+}
+
+enum InvoiceStatus {
+  Pagada
+  Pendiente
+  Parcial
+  Mora
+}
+
+enum DocType {
+  NDA
+  Contrato
+  DerechosImagen
+  Presupuesto
+  Otro
+}
