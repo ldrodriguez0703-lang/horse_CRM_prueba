@@ -1,38 +1,54 @@
-// Google Sheets data fetcher — Horse In Motion
-// Sheet ID: 1nSadqpqMIXQA5kIXi979_4SYgiQNdgzo  Tab: gid=901453185
-// Columns: Column7(skip) | Fecha | Mes | Cliente | Estado | Monto | Vendedor | Monto_num | Por Cobrar
+// Google Sheets — Horse In Motion
+// Columns: Column7(skip) | Fecha | Mes | Cliente | Estado | Monto | Vendedor | Monto_num | Por Cobrar(checkbox)
 
 export interface SalesRow {
+  id: string;
   cliente: string;
-  estado: "Confirmada" | "En Curso" | "Pendiente" | "Rechazada";
+  estado: "Confirmada" | "Deal" | "Muerto";
   valor: number;
-  cobrado: number;
-  pendiente: number;
+  montoDisplay: string;
+  porCobrar: boolean;
   fecha: string;
   mes: string;
   vendedor: string;
-  montoDisplay: string;
+}
+
+export interface MonthlyStats {
+  mes: string;
+  mesKey: string;
+  meta: number;
+  confirmadas: number;
+  deals: number;
+  totalPotencial: number;
+  pct: number;
+  alcanzado: number;
+  restante: number;
 }
 
 export interface DashboardData {
   ventas: SalesRow[];
+  arRows: SalesRow[];
+  monthlyStats: MonthlyStats[];
   metaMensual: number;
   totalConfirmado: number;
-  totalEnCurso: number;
+  totalDeals: number;
   totalPendienteCobro: number;
   gap: number;
 }
 
 const SHEET_ID = "1nSadqpqMIXQA5kIXi979_4SYgiQNdgzo";
 const GID = "901453185";
+const META = 10000;
 
-// Normaliza variantes del campo Estado al enum esperado
+function norm(s: string) {
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
 function normalizeEstado(raw: string): SalesRow["estado"] {
-  const v = raw.trim().toLowerCase();
+  const v = norm(raw);
   if (v.includes("confirm")) return "Confirmada";
-  if (v.includes("curso") || v.includes("negoc") || v.includes("proceso")) return "En Curso";
-  if (v.includes("rechazo") || v.includes("rechaz") || v.includes("cancel")) return "Rechazada";
-  return "Pendiente";
+  if (v.includes("muerto") || v.includes("cancel") || v.includes("rechazo") || v.includes("perdido")) return "Muerto";
+  return "Deal";
 }
 
 function parseNum(s: string): number {
@@ -41,95 +57,142 @@ function parseNum(s: string): number {
   return isNaN(n) ? 0 : n;
 }
 
+function parseBool(s: string): boolean {
+  const v = s.toLowerCase().trim();
+  return v === "true" || v === "verdadero" || v === "1" || v === "yes" || v === "sí" || v === "si";
+}
+
+// Ordena meses en español cronológicamente
+const MES_ORDER: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+  julio: 7, agosto: 8, septiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+};
+
+function mesToKey(mes: string): string {
+  const lower = norm(mes);
+  for (const [k, v] of Object.entries(MES_ORDER)) {
+    if (lower.includes(k)) {
+      const year = mes.match(/\d{4}/)?.[0] ?? mes.match(/\d{2}/)?.[0] ?? "26";
+      const fullYear = year.length === 2 ? `20${year}` : year;
+      return `${fullYear}-${String(v).padStart(2, "0")}`;
+    }
+  }
+  return mes;
+}
+
 export async function fetchSheetsData(): Promise<DashboardData> {
   try {
     const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`;
     const res = await fetch(url, { next: { revalidate: 300 } });
-
-    if (!res.ok) throw new Error(`Sheets ${res.status}`);
-
-    const csv = await res.text();
-    return processCSV(csv);
+    if (!res.ok) throw new Error(`${res.status}`);
+    return processCSV(await res.text());
   } catch {
-    return getMockData();
+    return buildResult(getMockRows());
   }
 }
 
 function processCSV(csv: string): DashboardData {
   const lines = csv.split("\n").filter((l) => l.trim());
-  if (lines.length < 2) return getMockData();
+  if (lines.length < 2) return buildResult(getMockRows());
 
-  // Mapear headers dinámicamente (case-insensitive, sin tildes)
-  const normalize = (s: string) =>
-    s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const headers = lines[0].split(",").map((h) => norm(h.replace(/^"|"$/g, "")));
+  const col = (name: string) => headers.findIndex((h) => h.includes(norm(name)));
 
-  const headers = lines[0].split(",").map((h) => normalize(h.replace(/^"|"$/g, "")));
+  const iId        = col("column 7") !== -1 ? col("column 7") : 0;
+  const iCliente   = col("cliente");
+  const iEstado    = col("estado");
+  const iMontoNum  = col("monto_num") !== -1 ? col("monto_num") : col("monto");
+  const iMontoDisp = col("monto") !== -1 && col("monto") !== iMontoNum ? col("monto") : -1;
+  const iPorCobrar = col("por cobrar") !== -1 ? col("por cobrar") : col("cobrar");
+  const iFecha     = col("fecha");
+  const iMes       = col("mes");
+  const iVendedor  = col("vendedor");
 
-  const idx = (name: string) => headers.findIndex((h) => h.includes(normalize(name)));
-
-  const iCliente   = idx("cliente");
-  const iEstado    = idx("estado");
-  const iMonto     = idx("monto_num") !== -1 ? idx("monto_num") : idx("monto");
-  const iMontoDisp = idx("monto") !== -1 && idx("monto") !== iMonto ? idx("monto") : -1;
-  const iPorCobrar = idx("por cobrar") !== -1 ? idx("por cobrar") : idx("cobrar");
-  const iFecha     = idx("fecha");
-  const iMes       = idx("mes");
-  const iVendedor  = idx("vendedor");
-
-  const data: SalesRow[] = lines
+  const rows: SalesRow[] = lines
     .slice(1)
-    .map((line) => {
-      const cols = line.split(",").map((c) => c.replace(/^"|"$/g, "").trim());
-      const cliente = iCliente !== -1 ? cols[iCliente] : "";
+    .map((line): SalesRow | null => {
+      const c = line.split(",").map((x) => x.replace(/^"|"$/g, "").trim());
+      const cliente = iCliente !== -1 ? c[iCliente] : "";
       if (!cliente) return null;
-
-      const montoNum   = iMonto !== -1 ? parseNum(cols[iMonto]) : 0;
-      const porCobrar  = iPorCobrar !== -1 ? parseNum(cols[iPorCobrar]) : 0;
-      const cobrado    = montoNum - porCobrar;
-
       return {
+        id:          iId !== -1 ? c[iId] : "",
         cliente,
-        estado:       normalizeEstado(iEstado !== -1 ? cols[iEstado] : ""),
-        valor:        montoNum,
-        cobrado:      Math.max(0, cobrado),
-        pendiente:    porCobrar,
-        fecha:        iFecha !== -1 ? cols[iFecha] : "",
-        mes:          iMes !== -1 ? cols[iMes] : "",
-        vendedor:     iVendedor !== -1 ? cols[iVendedor] : "",
-        montoDisplay: iMontoDisp !== -1 ? cols[iMontoDisp] : "",
-      } as SalesRow;
+        estado:      normalizeEstado(iEstado !== -1 ? c[iEstado] : ""),
+        valor:       iMontoNum !== -1 ? parseNum(c[iMontoNum]) : 0,
+        montoDisplay: iMontoDisp !== -1 ? c[iMontoDisp] : "",
+        porCobrar:   iPorCobrar !== -1 ? parseBool(c[iPorCobrar]) : false,
+        fecha:       iFecha !== -1 ? c[iFecha] : "",
+        mes:         iMes !== -1 ? c[iMes] : "",
+        vendedor:    iVendedor !== -1 ? c[iVendedor] : "",
+      };
     })
     .filter(Boolean) as SalesRow[];
 
-  return buildResult(data);
+  return buildResult(rows);
 }
 
 function buildResult(ventas: SalesRow[]): DashboardData {
-  const metaMensual       = 50000;
-  const totalConfirmado   = ventas.filter((v) => v.estado === "Confirmada").reduce((s, v) => s + v.valor, 0);
-  const totalEnCurso      = ventas.filter((v) => v.estado === "En Curso").reduce((s, v) => s + v.valor, 0);
-  const totalPendienteCobro = ventas.reduce((s, v) => s + v.pendiente, 0);
+  // AR: solo los que tienen Por Cobrar = true (checkbox marcado)
+  const arRows = ventas.filter((v) => v.porCobrar);
+
+  // Agrupar por mes para estadísticas mensuales
+  const byMes: Record<string, { mes: string; confirmadas: number; deals: number }> = {};
+  ventas.forEach((v) => {
+    if (!v.mes || v.estado === "Muerto") return;
+    const key = mesToKey(v.mes);
+    if (!byMes[key]) byMes[key] = { mes: v.mes, confirmadas: 0, deals: 0 };
+    if (v.estado === "Confirmada") byMes[key].confirmadas += v.valor;
+    if (v.estado === "Deal")       byMes[key].deals       += v.valor;
+  });
+
+  const monthlyStats: MonthlyStats[] = Object.entries(byMes)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, d]): MonthlyStats => {
+      const alcanzado     = d.confirmadas;
+      const totalPotencial = d.confirmadas + d.deals;
+      const pct           = META > 0 ? Math.round((alcanzado / META) * 100) : 0;
+      const restante      = Math.max(0, META - alcanzado);
+      return {
+        mes: d.mes,
+        mesKey: key,
+        meta: META,
+        confirmadas: d.confirmadas,
+        deals: d.deals,
+        totalPotencial,
+        pct,
+        alcanzado,
+        restante,
+      };
+    });
+
+  const totalConfirmado     = ventas.filter((v) => v.estado === "Confirmada").reduce((s, v) => s + v.valor, 0);
+  const totalDeals          = ventas.filter((v) => v.estado === "Deal").reduce((s, v) => s + v.valor, 0);
+  const totalPendienteCobro = arRows.reduce((s, v) => s + v.valor, 0);
 
   return {
     ventas,
-    metaMensual,
+    arRows,
+    monthlyStats,
+    metaMensual: META,
     totalConfirmado,
-    totalEnCurso,
+    totalDeals,
     totalPendienteCobro,
-    gap: Math.max(0, metaMensual - totalConfirmado),
+    gap: Math.max(0, META - (monthlyStats.at(-1)?.confirmadas ?? 0)),
   };
 }
 
-function getMockData(): DashboardData {
-  const ventas: SalesRow[] = [
-    { cliente: "Bavaria",     estado: "Confirmada", valor: 18500, cobrado: 9250,  pendiente: 9250,  fecha: "2026-04-05", mes: "Abr 2026", vendedor: "Luis", montoDisplay: "$18,500" },
-    { cliente: "Claro",       estado: "Confirmada", valor: 12000, cobrado: 12000, pendiente: 0,     fecha: "2026-04-10", mes: "Abr 2026", vendedor: "Luis", montoDisplay: "$12,000" },
-    { cliente: "Bancolombia", estado: "En Curso",   valor: 8000,  cobrado: 0,     pendiente: 8000,  fecha: "2026-04-18", mes: "Abr 2026", vendedor: "Luis", montoDisplay: "$8,000"  },
-    { cliente: "Éxito",       estado: "En Curso",   valor: 25000, cobrado: 0,     pendiente: 25000, fecha: "2026-04-20", mes: "Abr 2026", vendedor: "Luis", montoDisplay: "$25,000" },
-    { cliente: "Rappi",       estado: "Pendiente",  valor: 4500,  cobrado: 0,     pendiente: 4500,  fecha: "2026-05-01", mes: "May 2026", vendedor: "Luis", montoDisplay: "$4,500"  },
-    { cliente: "Movistar",    estado: "Rechazada",  valor: 6000,  cobrado: 0,     pendiente: 0,     fecha: "2026-03-15", mes: "Mar 2026", vendedor: "Luis", montoDisplay: "$6,000"  },
-    { cliente: "Samsung",     estado: "Confirmada", valor: 15000, cobrado: 15000, pendiente: 0,     fecha: "2026-03-20", mes: "Mar 2026", vendedor: "Luis", montoDisplay: "$15,000" },
-    { cliente: "Avianca",     estado: "En Curso",   valor: 35000, cobrado: 17500, pendiente: 17500, fecha: "2026-04-25", mes: "Abr 2026", vendedor: "Luis", montoDisplay: "$35,000" },
+function getMockRows(): SalesRow[] {
+  return [
+    { id: "V00001", cliente: "Dual",         estado: "Confirmada", valor: 1769.91,  montoDisplay: "$1,769.91",  porCobrar: false, fecha: "1/4/26",  mes: "Enero",   vendedor: "Jesus"      },
+    { id: "V00002", cliente: "Gigante",       estado: "Deal",       valor: 10000,    montoDisplay: "$10,000.00", porCobrar: false, fecha: "1/5/26",  mes: "Enero",   vendedor: "Alejandro"  },
+    { id: "V00003", cliente: "Bodas",         estado: "Confirmada", valor: 1000,     montoDisplay: "$1,000.00",  porCobrar: false, fecha: "1/6/26",  mes: "Enero",   vendedor: "Jesus"      },
+    { id: "V00008", cliente: "Innovablends",  estado: "Deal",       valor: 11000,    montoDisplay: "$11,000.00", porCobrar: false, fecha: "1/21/26", mes: "Enero",   vendedor: "Jesus"      },
+    { id: "V00009", cliente: "ST Costa Rica", estado: "Muerto",     valor: 7000,     montoDisplay: "$7,000.00",  porCobrar: false, fecha: "1/22/26", mes: "Enero",   vendedor: "Jesus"      },
+    { id: "V00015", cliente: "Dual",          estado: "Confirmada", valor: 1769.91,  montoDisplay: "$1,769.91",  porCobrar: false, fecha: "2/9/26",  mes: "Febrero", vendedor: "Jesus"      },
+    { id: "V00016", cliente: "Scouts CR",     estado: "Deal",       valor: 14000,    montoDisplay: "$14,000.00", porCobrar: false, fecha: "2/10/26", mes: "Febrero", vendedor: "Jesus"      },
+    { id: "V00017", cliente: "RC Inmobiliaria",estado: "Muerto",    valor: 5000,     montoDisplay: "$5,000.00",  porCobrar: false, fecha: "2/10/26", mes: "Febrero", vendedor: "Luis Diego" },
+    { id: "V00023", cliente: "Joven Salud",   estado: "Confirmada", valor: 200,      montoDisplay: "$200.00",    porCobrar: true,  fecha: "2/24/26", mes: "Febrero", vendedor: "Diego"      },
+    { id: "V00024", cliente: "Dual",          estado: "Confirmada", valor: 1769.91,  montoDisplay: "$1,769.91",  porCobrar: false, fecha: "3/1/26",  mes: "Marzo",   vendedor: "Jesus"      },
+    { id: "V00025", cliente: "Sondel",        estado: "Confirmada", valor: 1000,     montoDisplay: "$1,000.00",  porCobrar: false, fecha: "3/2/26",  mes: "Marzo",   vendedor: "Jesus"      },
   ];
-  return buildResult(ventas);
 }
