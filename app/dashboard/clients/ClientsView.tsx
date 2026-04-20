@@ -3,219 +3,160 @@
 import { useState } from "react";
 import { type Proyecto, fmt } from "@/lib/airtable";
 
+// Excluir: aun_no, cancelado, finalizado
+const EXCLUDED: Proyecto["estadoNorm"][] = ["aun_no", "cancelado", "finalizado"];
+
 const ESTADO_STYLE: Record<string, string> = {
   confirmado: "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]",
   en_curso:   "bg-[#4a9eff20] text-[#4a9eff] border-[#4a9eff40]",
-  aun_no:     "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
-  cancelado:  "bg-[#ff444420] text-[#ff6b6b] border-[#ff444440]",
   otro:       "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
 };
 
+type FilterKey = "todos" | "confirmado" | "en_curso";
+
 export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
+  const visible = proyectos.filter((p) => !EXCLUDED.includes(p.estadoNorm));
+
   const [selected, setSelected] = useState<Proyecto | null>(null);
-  const [search, setSearch]     = useState("");
-  const [filter, setFilter]     = useState("Todos");
+  const [search,   setSearch]   = useState("");
+  const [filter,   setFilter]   = useState<FilterKey>("todos");
 
-  const estadosUnicos = ["Todos", ...Array.from(new Set(proyectos.map((p) => p.estado))).sort()];
+  // Sumas por categoría
+  const sum = (norm?: string) =>
+    visible.filter((p) => !norm || p.estadoNorm === norm).reduce((s, p) => s + p.totalAcordado, 0);
 
-  const filtered = proyectos.filter((p) =>
-    (filter === "Todos" || p.estado === filter) &&
-    (p.nombre.toLowerCase().includes(search.toLowerCase()) ||
+  const kpis: { key: FilterKey; label: string; count: number; total: number; accent?: boolean }[] = [
+    { key: "todos",      label: "Total proyectos", count: visible.length,                                      total: sum()           },
+    { key: "confirmado", label: "Confirmados",      count: visible.filter(p => p.estadoNorm === "confirmado").length, total: sum("confirmado"), accent: true },
+    { key: "en_curso",   label: "En proceso",       count: visible.filter(p => p.estadoNorm === "en_curso").length,   total: sum("en_curso")  },
+  ];
+
+  const filtered = visible.filter((p) =>
+    (filter === "todos" || p.estadoNorm === filter) &&
+    (p.cliente.toLowerCase().includes(search.toLowerCase()) ||
+     p.proyecto.toLowerCase().includes(search.toLowerCase()) ||
      p.representante.toLowerCase().includes(search.toLowerCase()))
   );
 
-  // KPIs rápidos
-  const totalAcordado = proyectos.filter(p => p.estadoNorm === "confirmado").reduce((s, p) => s + p.totalAcordado, 0);
-  const enCurso       = proyectos.filter(p => p.estadoNorm === "en_curso").length;
-
   return (
     <div className="flex gap-5 h-full">
-      {/* Lista */}
       <div className="flex-1 min-w-0 flex flex-col gap-4">
 
-        {/* Mini KPIs */}
+        {/* ── KPI buttons ── */}
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl p-3">
-            <p className="text-xs text-[#6b6b6b] uppercase tracking-widest mb-1">Total proyectos</p>
-            <p className="text-xl font-bold text-[#FAFAFA]">{proyectos.length}</p>
-          </div>
-          <div className="bg-[#F5C200] border border-[#F5C200] rounded-xl p-3">
-            <p className="text-xs text-[#0a0a0a80] uppercase tracking-widest mb-1">Confirmados</p>
-            <p className="text-xl font-bold text-[#0a0a0a]">{fmt(totalAcordado)}</p>
-          </div>
-          <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl p-3">
-            <p className="text-xs text-[#6b6b6b] uppercase tracking-widest mb-1">En proceso</p>
-            <p className="text-xl font-bold text-[#4a9eff]">{enCurso}</p>
-          </div>
+          {kpis.map((k) => (
+            <button key={k.key} onClick={() => setFilter(k.key)}
+              className={`rounded-xl p-4 border text-left transition-all ${
+                filter === k.key
+                  ? k.accent
+                    ? "bg-[#F5C200] border-[#F5C200]"
+                    : "bg-[#1a1a1a] border-[#F5C200]"
+                  : "bg-[#1a1a1a] border-[#2a2a2a] hover:border-[#F5C200]"
+              }`}>
+              <p className={`text-xs font-medium tracking-widest uppercase mb-1 ${filter === k.key && k.accent ? "text-[#0a0a0a80]" : "text-[#6b6b6b]"}`}>
+                {k.label}
+              </p>
+              <p className={`text-xl font-bold ${filter === k.key && k.accent ? "text-[#0a0a0a]" : "text-[#FAFAFA]"}`}>
+                {fmt(k.total)}
+              </p>
+              <p className={`text-xs mt-0.5 ${filter === k.key && k.accent ? "text-[#0a0a0a70]" : "text-[#6b6b6b]"}`}>
+                {k.count} proyecto{k.count !== 1 ? "s" : ""}
+              </p>
+            </button>
+          ))}
         </div>
 
-        {/* Filtros */}
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            placeholder="Buscar proyecto o representante..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-48 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm text-[#FAFAFA] placeholder-[#6b6b6b] focus:outline-none focus:border-[#F5C200]"
-          />
-          <div className="flex gap-1.5 flex-wrap">
-            {estadosUnicos.map((e) => (
-              <button
-                key={e}
-                onClick={() => setFilter(e)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                  filter === e
-                    ? "bg-[#F5C200] text-[#0a0a0a] border-[#F5C200]"
-                    : "bg-[#1a1a1a] text-[#6b6b6b] border-[#2a2a2a] hover:border-[#F5C200]"
-                }`}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Búsqueda */}
+        <input type="text" placeholder="Buscar cliente, proyecto o representante..."
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-2 text-sm text-[#FAFAFA] placeholder-[#6b6b6b] focus:outline-none focus:border-[#F5C200]"
+        />
 
-        {/* Cards */}
-        <div className="space-y-2.5 overflow-y-auto">
-          {filtered.length === 0 && (
-            <p className="text-[#6b6b6b] text-sm pt-4">Sin resultados.</p>
-          )}
+        {/* Lista */}
+        <div className="space-y-2 overflow-y-auto">
+          {filtered.length === 0 && <p className="text-[#6b6b6b] text-sm pt-2">Sin resultados.</p>}
           {filtered.map((p) => (
-            <div
-              key={p.id}
-              onClick={() => setSelected(p)}
-              className={`bg-[#1a1a1a] border rounded-xl p-4 cursor-pointer transition-all hover:border-[#F5C200] ${
+            <div key={p.id} onClick={() => setSelected(p)}
+              className={`bg-[#1a1a1a] border rounded-xl px-4 py-3 cursor-pointer transition-all hover:border-[#F5C200] ${
                 selected?.id === p.id ? "border-[#F5C200]" : "border-[#2a2a2a]"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
+              }`}>
+              {/* Orden: cliente | proyecto | monto | estado */}
+              <div className="flex items-center gap-3">
+                {/* Avatar */}
+                <div className="w-8 h-8 rounded-full bg-[#F5C20020] border border-[#F5C20040] flex items-center justify-center flex-shrink-0">
+                  <span className="text-[#F5C200] font-bold text-xs">{p.cliente[0]}</span>
+                </div>
+                {/* Cliente */}
+                <div className="w-36 flex-shrink-0">
+                  <p className="text-[#FAFAFA] font-semibold text-sm truncate">{p.cliente}</p>
+                  <p className="text-[#6b6b6b] text-xs truncate">{p.representante}</p>
+                </div>
+                {/* Proyecto */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-[#FAFAFA] font-semibold text-sm truncate">{p.nombre}</p>
-                  <p className="text-[#6b6b6b] text-xs mt-0.5">
-                    {p.representante} · {p.fechaEntrega || p.fechaCreacion}
-                  </p>
+                  <p className="text-[#9b9b9b] text-sm truncate">{p.proyecto || p.nombre}</p>
+                  {p.fechaEntrega && <p className="text-[#3a3a3a] text-xs">{p.fechaEntrega}</p>}
                 </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${ESTADO_STYLE[p.estadoNorm]}`}>
-                    {p.estado}
-                  </span>
-                  <span className="text-sm font-bold text-[#F5C200]">{fmt(p.totalAcordado)}</span>
-                </div>
+                {/* Monto */}
+                <p className="text-[#F5C200] font-bold text-sm flex-shrink-0 w-24 text-right">
+                  {p.totalAcordado > 0 ? fmt(p.totalAcordado) : "—"}
+                </p>
+                {/* Estado */}
+                <span className={`text-xs px-2.5 py-1 rounded-full border font-medium flex-shrink-0 ${ESTADO_STYLE[p.estadoNorm] ?? ESTADO_STYLE.otro}`}>
+                  {p.estado}
+                </span>
               </div>
-
-              {/* Barra porcentaje */}
-              {p.porcentaje > 0 && (
-                <div className="mt-3">
-                  <div className="flex justify-between text-xs text-[#6b6b6b] mb-1">
-                    <span>Avance</span>
-                    <span>{p.porcentaje}%</span>
-                  </div>
-                  <div className="h-1.5 bg-[#2a2a2a] rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-[#F5C200] rounded-full"
-                      style={{ width: `${Math.min(100, p.porcentaje)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
           ))}
         </div>
       </div>
 
-      {/* Panel de detalle */}
+      {/* Panel detalle */}
       {selected && (
-        <div className="w-96 flex-shrink-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl flex flex-col overflow-hidden max-h-[calc(100vh-8rem)] shadow-2xl">
-          {/* Header */}
-          <div className="p-5 border-b border-[#1a1a1a]">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-[#FAFAFA] font-semibold leading-snug">{selected.nombre}</p>
-                <p className="text-[#6b6b6b] text-xs mt-1">{selected.representante}</p>
+        <div className="w-80 flex-shrink-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl flex flex-col overflow-hidden max-h-[calc(100vh-8rem)] shadow-2xl">
+          <div className="p-5 border-b border-[#1a1a1a] flex items-start justify-between gap-2">
+            <div>
+              <p className="text-[#FAFAFA] font-bold">{selected.cliente}</p>
+              {selected.proyecto && <p className="text-[#6b6b6b] text-xs mt-0.5">{selected.proyecto}</p>}
+              <div className="flex items-center gap-2 mt-2">
+                <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${ESTADO_STYLE[selected.estadoNorm] ?? ESTADO_STYLE.otro}`}>
+                  {selected.estado}
+                </span>
+                <span className="text-[#F5C200] font-bold text-sm">{fmt(selected.totalAcordado)}</span>
               </div>
-              <button onClick={() => setSelected(null)} className="text-[#6b6b6b] hover:text-[#FAFAFA] text-xl flex-shrink-0">×</button>
             </div>
-            <div className="flex items-center gap-2 mt-3">
-              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${ESTADO_STYLE[selected.estadoNorm]}`}>
-                {selected.estado}
-              </span>
-              <span className="text-[#F5C200] font-bold text-sm">{fmt(selected.totalAcordado)}</span>
-            </div>
+            <button onClick={() => setSelected(null)} className="text-[#6b6b6b] hover:text-[#FAFAFA] text-xl">×</button>
           </div>
-
-          {/* Body */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
-
-            {/* Fechas + porcentaje */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">
             <Section label="General">
+              <Row k="Representante"   v={selected.representante} />
               <Row k="Fecha creación"  v={selected.fechaCreacion} />
               <Row k="Fecha entrega"   v={selected.fechaEntrega || "—"} />
               <Row k="Avance"          v={`${selected.porcentaje}%`} />
-              <Row k="Tareas"          v={`${selected.tareasCount} tareas`} />
             </Section>
-
-            {/* Barra avance */}
-            {selected.porcentaje > 0 && (
-              <div className="h-2 bg-[#2a2a2a] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[#F5C200] rounded-full"
-                  style={{ width: `${Math.min(100, selected.porcentaje)}%` }}
-                />
-              </div>
-            )}
-
-            {/* Descripción */}
             {selected.descripcion && (
               <Section label="Descripción">
-                <p className="text-[#FAFAFA] text-xs leading-relaxed bg-[#1a1a1a] rounded-lg p-3 border border-[#2a2a2a] max-h-36 overflow-y-auto">
+                <p className="text-[#FAFAFA] text-xs leading-relaxed bg-[#1a1a1a] rounded-lg p-3 border border-[#2a2a2a] max-h-32 overflow-y-auto">
                   {selected.descripcion}
                 </p>
               </Section>
             )}
-
-            {/* Objetivo */}
-            {selected.objetivo && (
-              <Section label="Objetivo / Entregables">
-                <p className="text-[#FAFAFA] text-xs leading-relaxed bg-[#1a1a1a] rounded-lg p-3 border border-[#2a2a2a] max-h-36 overflow-y-auto">
-                  {selected.objetivo}
-                </p>
-              </Section>
-            )}
-
-            {/* Links */}
             {(selected.proforma || selected.presentacion) && (
               <Section label="Documentos">
-                {selected.proforma && (
-                  <a href={selected.proforma} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-xs text-[#F5C200] hover:underline">
-                    <span>↗</span> Proforma
-                  </a>
-                )}
-                {selected.presentacion && (
-                  <a href={selected.presentacion} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-xs text-[#F5C200] hover:underline">
-                    <span>↗</span> Presentación
-                  </a>
-                )}
+                {selected.proforma     && <a href={selected.proforma}    target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Proforma</a>}
+                {selected.presentacion && <a href={selected.presentacion} target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Presentación</a>}
               </Section>
             )}
-
-            {/* Material adicional */}
             {selected.material.length > 0 && (
-              <Section label={`Material adicional (${selected.material.length})`}>
-                <div className="grid grid-cols-3 gap-2">
+              <Section label={`Material (${selected.material.length})`}>
+                <div className="grid grid-cols-3 gap-1.5">
                   {selected.material.map((att) => (
                     <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer"
-                      className="group relative aspect-square bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg overflow-hidden hover:border-[#F5C200] transition-colors">
-                      {att.type.startsWith("image/") && att.thumbnails?.small ? (
+                      className="aspect-square bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg overflow-hidden hover:border-[#F5C200] transition-colors">
+                      {att.type.startsWith("image/") && att.thumbnails?.small
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={att.thumbnails.small.url} alt={att.filename}
-                          className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <span className="text-[#6b6b6b] text-xs text-center px-1 truncate">{att.filename}</span>
-                        </div>
-                      )}
+                        ? <img src={att.thumbnails.small.url} alt={att.filename} className="w-full h-full object-cover" />
+                        : <div className="w-full h-full flex items-center justify-center"><span className="text-[9px] text-[#6b6b6b] text-center px-1 line-clamp-2">{att.filename}</span></div>
+                      }
                     </a>
                   ))}
                 </div>
@@ -236,11 +177,10 @@ function Section({ label, children }: { label: string; children: React.ReactNode
     </div>
   );
 }
-
 function Row({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex justify-between items-start gap-2">
-      <span className="text-[#6b6b6b] text-xs flex-shrink-0">{k}</span>
+    <div className="flex justify-between gap-2">
+      <span className="text-[#6b6b6b] text-xs">{k}</span>
       <span className="text-[#FAFAFA] text-xs text-right">{v}</span>
     </div>
   );

@@ -1,4 +1,5 @@
 import { fetchSheetsData } from "@/lib/sheets";
+import { fetchProyectos, getPhase } from "@/lib/airtable";
 import SalesChart from "@/components/SalesChart";
 import MonthlyDonut from "@/components/MonthlyDonut";
 
@@ -23,14 +24,9 @@ function KPI({ label, value, sub, accent, warn }: {
   );
 }
 
-const ESTADO_STYLE: Record<string, string> = {
-  Confirmada: "bg-[#F5C20020] text-[#F5C200] border border-[#F5C20040]",
-  Deal:       "bg-[#4a9eff20] text-[#4a9eff] border border-[#4a9eff40]",
-  Muerto:     "bg-[#ff444420] text-[#ff4444] border border-[#ff444440]",
-};
 
 export default async function DashboardPage() {
-  const d = await fetchSheetsData();
+  const [d, proyectos] = await Promise.all([fetchSheetsData(), fetchProyectos()]);
 
   // Datos para el gráfico de barras
   const chartData = d.monthlyStats.map((m) => ({
@@ -149,25 +145,30 @@ export default async function DashboardPage() {
         <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-5">
           <p className="text-sm font-medium text-[#FAFAFA] mb-4">Pipeline Activo</p>
           <div className="space-y-2">
-            {d.ventas
-              .filter((v) => v.estado !== "Muerto")
+            {proyectos
+              .filter((p) => p.estadoNorm !== "cancelado" && p.estadoNorm !== "aun_no")
               .slice(0, 7)
-              .map((v, i) => (
-                <div key={i} className="flex items-center justify-between py-2 border-b border-[#2a2a2a] last:border-0">
-                  <div className="flex-1 min-w-0 mr-3">
-                    <p className="text-sm text-[#FAFAFA] font-medium truncate">{v.cliente}</p>
-                    <p className="text-xs text-[#6b6b6b]">{v.vendedor} · {v.mes}</p>
+              .map((p) => {
+                const fase = getPhase(p.porcentaje);
+                return (
+                  <div key={p.id} className="flex items-center justify-between py-2 border-b border-[#2a2a2a] last:border-0">
+                    <div className="flex-1 min-w-0 mr-3">
+                      <p className="text-sm text-[#FAFAFA] font-medium truncate">{p.cliente}</p>
+                      <p className="text-xs text-[#6b6b6b] truncate">{p.proyecto || p.nombre}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium border"
+                        style={{ background: `${fase.color}15`, color: fase.color, borderColor: `${fase.color}40` }}>
+                        {fase.label}
+                      </span>
+                      <span className="text-xs text-[#6b6b6b]">{p.porcentaje}%</span>
+                      {p.totalAcordado > 0 && (
+                        <span className="text-sm font-semibold text-[#F5C200]">{fmt(p.totalAcordado)}</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ESTADO_STYLE[v.estado]}`}>
-                      {v.estado}
-                    </span>
-                    <span className="text-sm font-semibold text-[#F5C200]">
-                      {v.montoDisplay || fmt(v.valor)}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
           </div>
         </div>
       </div>
