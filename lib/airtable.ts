@@ -98,3 +98,19 @@ export async function fetchProyectos(): Promise<Proyecto[]> {
     return [];
   }
 }
+
+export async function patchProyecto(recordId: string, fields: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${TABLE}/${recordId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fields }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
