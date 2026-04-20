@@ -1,7 +1,8 @@
 "use client";
 
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, LabelList,
 } from "recharts";
 import type { VendedorMonthData } from "@/lib/sheets";
 
@@ -21,10 +22,15 @@ export default function VendedorChart({
   const flat = data.map((d) => ({ mes: d.mes, ...d.totales }));
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={flat} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={flat} margin={{ top: 20, right: 4, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-        <XAxis dataKey="mes" tick={{ fill: "#6b6b6b", fontSize: 11 }} axisLine={false} tickLine={false} />
+        <XAxis
+          dataKey="mes"
+          tick={{ fill: "#9b9b9b", fontSize: 12, fontWeight: 500 }}
+          axisLine={false}
+          tickLine={false}
+        />
         <YAxis
           tick={{ fill: "#6b6b6b", fontSize: 10 }}
           axisLine={false}
@@ -36,9 +42,18 @@ export default function VendedorChart({
           labelStyle={{ color: "#FAFAFA" }}
           formatter={(value) => [fmt(Number(value)), ""]}
         />
-        <Legend wrapperStyle={{ fontSize: 11, color: "#6b6b6b" }} />
+        <Legend wrapperStyle={{ fontSize: 11, color: "#9b9b9b" }} />
         {vendedores.map((v, i) => (
-          <Bar key={v} dataKey={v} name={v} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]} />
+          <Bar key={v} dataKey={v} name={v} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]}>
+            <LabelList
+              dataKey={v}
+              position="inside"
+              formatter={(val: unknown) =>
+                Number(val) > 500 ? `$${(Number(val) / 1000).toFixed(1)}k` : ""
+              }
+              style={{ fill: "#0a0a0a", fontSize: 9, fontWeight: "bold" }}
+            />
+          </Bar>
         ))}
       </BarChart>
     </ResponsiveContainer>

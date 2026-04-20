@@ -29,15 +29,18 @@ function KPI({ label, value, sub, accent, warn }: {
 export default async function DashboardPage() {
   const [d, proyectos] = await Promise.all([fetchSheetsData(), fetchProyectos()]);
 
-  // Datos para el gráfico de barras
-  const chartData = d.monthlyStats.map((m) => ({
+  // Most-recent-first for all charts/tables
+  const monthlyDesc = [...d.monthlyStats].reverse();
+  const vendedorDesc = [...d.vendedorData].reverse();
+
+  const chartData = monthlyDesc.map((m) => ({
     mes: m.mes,
     confirmado: m.confirmadas,
     enCurso: m.deals,
     meta: m.meta,
   }));
 
-  // KPI global
+  // KPI global (still most-recent = last in ascending original)
   const currentMonth = d.monthlyStats.at(-1);
   const pctActual = currentMonth?.pct ?? 0;
 
@@ -64,7 +67,7 @@ export default async function DashboardPage() {
               <th className="text-left py-3 px-4 text-xs text-[#6b6b6b] font-medium tracking-widest uppercase w-44">
                 Indicador
               </th>
-              {d.monthlyStats.map((m) => (
+              {monthlyDesc.map((m) => (
                 <th key={m.mesKey} className="text-right py-3 px-4 text-xs text-[#F5C200] font-semibold tracking-wide uppercase">
                   {m.mes}
                 </th>
@@ -83,7 +86,7 @@ export default async function DashboardPage() {
             ].map(({ key, label, cls, isPct }) => (
               <tr key={key} className="border-b border-[#1f1f1f] hover:bg-[#2a2a2a20]">
                 <td className="py-2.5 px-4 text-xs text-[#6b6b6b] font-medium">{label}</td>
-                {d.monthlyStats.map((m) => {
+                {monthlyDesc.map((m) => {
                   const raw = m[key as keyof typeof m] as number;
                   return (
                     <td key={m.mesKey} className={`py-2.5 px-4 text-right text-sm ${cls}`}>
@@ -98,9 +101,9 @@ export default async function DashboardPage() {
 
         {/* ── Barras de progreso por mes ── */}
         <div className="grid border-t border-[#2a2a2a]"
-          style={{ gridTemplateColumns: `11rem repeat(${d.monthlyStats.length}, 1fr)` }}>
+          style={{ gridTemplateColumns: `11rem repeat(${monthlyDesc.length}, 1fr)` }}>
           <div className="py-3 px-4" />
-          {d.monthlyStats.map((m) => {
+          {monthlyDesc.map((m) => {
             const w = Math.min(100, m.pct);
             const color = m.pct >= 100 ? "#22c55e" : m.pct >= 75 ? "#F5C200" : "#f97316";
             return (
@@ -121,7 +124,7 @@ export default async function DashboardPage() {
       {d.vendedores.length > 0 && (
         <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-5">
           <p className="text-sm font-medium text-[#FAFAFA] mb-4">Confirmadas por Vendedor</p>
-          <VendedorChart data={d.vendedorData} vendedores={d.vendedores} />
+          <VendedorChart data={vendedorDesc} vendedores={d.vendedores} />
         </div>
       )}
 
@@ -131,7 +134,7 @@ export default async function DashboardPage() {
           Cumplimiento mensual — Meta {fmt(d.metaMensual)}
         </p>
         <div className="flex flex-wrap gap-8 justify-start">
-          {d.monthlyStats.map((m) => (
+          {monthlyDesc.map((m) => (
             <MonthlyDonut
               key={m.mesKey}
               mes={m.mes}

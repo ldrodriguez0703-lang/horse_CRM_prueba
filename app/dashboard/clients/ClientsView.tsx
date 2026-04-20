@@ -6,25 +6,33 @@ import { type Proyecto, fmt, PIPELINE_STAGES, getPhase } from "@/lib/airtable";
 const BASE_ID  = "appKEdyjyWLAT7dHQ";
 const TABLE_ID = "tblaWMR3gJbd2xnw4";
 
-const ESTADO_STYLE: Record<string, string> = {
-  confirmado: "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]",
-  en_curso:   "bg-[#4a9eff20] text-[#4a9eff] border-[#4a9eff40]",
-  aun_no:     "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
-  cancelado:  "bg-[#ff444420] text-[#ff6b6b] border-[#ff444440]",
-  finalizado: "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]",
-  otro:       "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
-};
+function estadoStyle(raw: string): string {
+  const v = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (v.includes("aprobado") || v.includes("confirm"))
+    return "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]";
+  if (v.includes("seguimiento"))
+    return "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]";
+  if (v.includes("cotizar") || v.includes("en curso") || v.includes("proceso") || v.includes("activo"))
+    return "bg-[#4a9eff20] text-[#4a9eff] border-[#4a9eff40]";
+  if (v.includes("aun") || v.includes("pendiente") || v.includes("prospecto"))
+    return "bg-[#9b9b9b20] text-[#9b9b9b] border-[#9b9b9b40]";
+  if (v.includes("cancel") || v.includes("muerto"))
+    return "bg-[#ff444420] text-[#ff4444] border-[#ff444440]";
+  if (v.includes("finaliz") || v.includes("entregado") || v.includes("terminado"))
+    return "bg-[#FAFAFA20] text-[#FAFAFA] border-[#FAFAFA40]";
+  return "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]";
+}
 
-// Priority for sorting by estado (lower = first)
 function estadoPriority(raw: string): number {
   const v = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (v.includes("aprobado") || v.includes("confirm"))  return 1;
   if (v.includes("seguimiento"))                        return 2;
-  if (v.includes("cotizar") || v.includes("proceso") || v.includes("curso")) return 3;
+  if (v.includes("cotizar") || v.includes("proceso") || v.includes("activo")) return 3;
   if (v.includes("editar") || v.includes("revis"))      return 4;
   if (v.includes("aun") || v.includes("pendiente") || v.includes("prospecto")) return 5;
   if (v.includes("cancel") || v.includes("muerto"))     return 6;
-  return 7;
+  if (v.includes("finaliz") || v.includes("entregado")) return 7;
+  return 8;
 }
 
 function etapaLabel(pct: number): string {
@@ -40,17 +48,19 @@ function uniqueEstados(proyectos: Proyecto[]): string[] {
   return [...map.entries()].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(([e]) => e);
 }
 
-type SortKey = "cliente" | "proyecto" | "estado" | "porcentaje";
+type SortKey = "cliente" | "proyecto" | "estado" | "monto" | "porcentaje";
 type SortDir = "asc" | "desc";
-type ColWidths = { cliente: number; proyecto: number; estado: number; porcentaje: number };
+type ColWidths = { cliente: number; proyecto: number; estado: number; monto: number; porcentaje: number };
 
 export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
-  const [selected,      setSelected]      = useState<Proyecto | null>(null);
-  const [search,        setSearch]        = useState("");
-  const [filterEstado,  setFilterEstado]  = useState<string | null>(null);
-  const [sortKey,       setSortKey]       = useState<SortKey>("cliente");
-  const [sortDir,       setSortDir]       = useState<SortDir>("asc");
-  const [colWidths,     setColWidths]     = useState<ColWidths>({ cliente: 220, proyecto: 260, estado: 160, porcentaje: 150 });
+  const [selected,     setSelected]     = useState<Proyecto | null>(null);
+  const [search,       setSearch]       = useState("");
+  const [filterEstado, setFilterEstado] = useState<string | null>(null);
+  const [sortKey,      setSortKey]      = useState<SortKey>("estado");
+  const [sortDir,      setSortDir]      = useState<SortDir>("asc");
+  const [colWidths,    setColWidths]    = useState<ColWidths>({
+    cliente: 200, proyecto: 240, estado: 160, monto: 120, porcentaje: 150,
+  });
 
   const dragRef = useRef<{ col: keyof ColWidths; startX: number; startW: number } | null>(null);
 
@@ -67,7 +77,8 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
     let cmp = 0;
     if      (sortKey === "cliente")    cmp = a.cliente.localeCompare(b.cliente);
     else if (sortKey === "proyecto")   cmp = a.proyecto.localeCompare(b.proyecto);
-    else if (sortKey === "estado")     cmp = estadoPriority(a.estado) - estadoPriority(b.estado);
+    else if (sortKey === "estado")     cmp = estadoPriority(a.estado) - estadoPriority(b.estado) || a.estado.localeCompare(b.estado);
+    else if (sortKey === "monto")      cmp = a.totalAcordado - b.totalAcordado;
     else if (sortKey === "porcentaje") cmp = a.porcentaje - b.porcentaje;
     return sortDir === "asc" ? cmp : -cmp;
   });
@@ -94,18 +105,21 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
     window.addEventListener("mouseup", onUp);
   }
 
-  const COL_LABELS: Record<SortKey, string> = {
-    cliente: "Cliente", proyecto: "Proyecto", estado: "Estado", porcentaje: "% Avance",
-  };
+  const COLS: { key: SortKey; label: string }[] = [
+    { key: "cliente",    label: "Cliente" },
+    { key: "proyecto",   label: "Proyecto" },
+    { key: "estado",     label: "Estado" },
+    { key: "monto",      label: "Monto" },
+    { key: "porcentaje", label: "% Avance" },
+  ];
 
   return (
     <div className="flex gap-5 h-full">
       <div className="flex-1 min-w-0 flex flex-col gap-4 overflow-hidden">
 
-        {/* KPI buttons — one per estado value */}
+        {/* KPI buttons — one per estado */}
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setFilterEstado(null)}
+          <button onClick={() => setFilterEstado(null)}
             className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
               filterEstado === null
                 ? "bg-[#F5C200] text-[#0a0a0a] border-[#F5C200]"
@@ -115,10 +129,11 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
           </button>
           {estados.map((est) => {
             const count = proyectos.filter((p) => p.estado === est).length;
+            const active = filterEstado === est;
             return (
-              <button key={est} onClick={() => setFilterEstado(filterEstado === est ? null : est)}
+              <button key={est} onClick={() => setFilterEstado(active ? null : est)}
                 className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-                  filterEstado === est
+                  active
                     ? "bg-[#F5C200] text-[#0a0a0a] border-[#F5C200]"
                     : "bg-[#1a1a1a] text-[#6b6b6b] border-[#2a2a2a] hover:border-[#F5C200] hover:text-[#FAFAFA]"
                 }`}>
@@ -138,31 +153,25 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
         <div className="flex-1 overflow-auto rounded-xl border border-[#2a2a2a]">
           <table className="text-sm border-collapse" style={{ minWidth: "100%", tableLayout: "fixed" }}>
             <colgroup>
-              {(["cliente", "proyecto", "estado", "porcentaje"] as SortKey[]).map((col) => (
-                <col key={col} style={{ width: colWidths[col] }} />
-              ))}
+              {COLS.map((c) => <col key={c.key} style={{ width: colWidths[c.key] }} />)}
             </colgroup>
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#111111] border-b border-[#2a2a2a]">
-                {(["cliente", "proyecto", "estado", "porcentaje"] as SortKey[]).map((col) => (
-                  <th key={col} className="relative text-left py-2.5 px-3 text-xs text-[#6b6b6b] font-medium tracking-widest uppercase select-none">
-                    <button onClick={() => handleSort(col)} className="flex items-center gap-1 hover:text-[#FAFAFA] transition-colors">
-                      {COL_LABELS[col]}
-                      {sortKey === col && <span className="text-[#F5C200]">{sortDir === "asc" ? "↑" : "↓"}</span>}
+                {COLS.map((c) => (
+                  <th key={c.key} className="relative text-left py-2.5 px-3 text-xs text-[#6b6b6b] font-medium tracking-widest uppercase select-none">
+                    <button onClick={() => handleSort(c.key)} className="flex items-center gap-1 hover:text-[#FAFAFA] transition-colors">
+                      {c.label}
+                      {sortKey === c.key && <span className="text-[#F5C200]">{sortDir === "asc" ? "↑" : "↓"}</span>}
                     </button>
-                    <div
-                      onMouseDown={(e) => startDrag(col, e)}
-                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#F5C20030] transition-colors"
-                    />
+                    <div onMouseDown={(e) => startDrag(c.key, e)}
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#F5C20030] transition-colors" />
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="py-8 text-center text-[#6b6b6b] text-sm">Sin resultados.</td>
-                </tr>
+                <tr><td colSpan={5} className="py-8 text-center text-[#6b6b6b] text-sm">Sin resultados.</td></tr>
               )}
               {sorted.map((p) => {
                 const fase  = getPhase(p.porcentaje);
@@ -173,7 +182,6 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
                     className={`border-b border-[#1a1a1a] cursor-pointer transition-colors hover:bg-[#1a1a1a] ${
                       selected?.id === p.id ? "bg-[#1a1a1a] outline outline-1 outline-[#F5C20040]" : ""
                     }`}>
-                    {/* Cliente */}
                     <td className="py-2.5 px-3 overflow-hidden">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-[#F5C20020] border border-[#F5C20040] flex items-center justify-center flex-shrink-0">
@@ -185,18 +193,18 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
                         </div>
                       </div>
                     </td>
-                    {/* Proyecto */}
                     <td className="py-2.5 px-3 overflow-hidden">
                       <p className="text-[#9b9b9b] text-sm truncate">{p.proyecto || p.nombre}</p>
                       {p.fechaEntrega && <p className="text-[#3a3a3a] text-xs">{p.fechaEntrega}</p>}
                     </td>
-                    {/* Estado */}
                     <td className="py-2.5 px-3">
-                      <span className={`text-xs px-2.5 py-1 rounded-full border font-medium whitespace-nowrap ${ESTADO_STYLE[p.estadoNorm] ?? ESTADO_STYLE.otro}`}>
+                      <span className={`text-xs px-2.5 py-1 rounded-full border font-medium whitespace-nowrap ${estadoStyle(p.estado)}`}>
                         {p.estado}
                       </span>
                     </td>
-                    {/* % Avance */}
+                    <td className="py-2.5 px-3 text-[#F5C200] font-semibold text-sm">
+                      {p.totalAcordado > 0 ? fmt(p.totalAcordado) : <span className="text-[#3a3a3a]">—</span>}
+                    </td>
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-1.5 bg-[#2a2a2a] rounded-full overflow-hidden">
@@ -222,7 +230,7 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
               <p className="text-[#FAFAFA] font-bold truncate">{selected.cliente}</p>
               {selected.proyecto && <p className="text-[#6b6b6b] text-xs mt-0.5 truncate">{selected.proyecto}</p>}
               <div className="flex items-center gap-2 mt-2 flex-wrap">
-                <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${ESTADO_STYLE[selected.estadoNorm] ?? ESTADO_STYLE.otro}`}>
+                <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${estadoStyle(selected.estado)}`}>
                   {selected.estado}
                 </span>
                 {selected.totalAcordado > 0 && (
@@ -234,7 +242,6 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
           </div>
 
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
-
             <Section label="General">
               <Row k="Representante" v={selected.representante} />
               <Row k="Fecha creación" v={selected.fechaCreacion} />
@@ -242,7 +249,6 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
               <Row k="Avance" v={`${selected.porcentaje}%`} />
             </Section>
 
-            {/* Documentos — siempre visibles */}
             <Section label="Documentos">
               {selected.presentacion
                 ? <a href={selected.presentacion} target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Presentación</a>
@@ -251,8 +257,7 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
               {selected.proforma && (
                 <a href={selected.proforma} target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Proforma</a>
               )}
-              <a
-                href={`https://airtable.com/${BASE_ID}/${TABLE_ID}/${selected.id}`}
+              <a href={`https://airtable.com/${BASE_ID}/${TABLE_ID}/${selected.id}`}
                 target="_blank" rel="noopener noreferrer"
                 className="text-xs text-[#4a9eff] hover:underline block mt-1">
                 ↗ Ver en Airtable

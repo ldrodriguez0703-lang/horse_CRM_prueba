@@ -23,6 +23,7 @@ export interface Proyecto {
   presentacion: string;
   material: AirtableAttachment[];
   tareasCount: number;
+  encargado: string;
 }
 
 // ── Etapas del pipeline con porcentaje auto-asignado ─────────────────────────
@@ -35,6 +36,7 @@ export const PIPELINE_STAGES = [
   { fase: "Pre-Producción", etapa: "Locaciones",        pct: 38  },
   { fase: "Pre-Producción", etapa: "Permisos",          pct: 45  },
   { fase: "Producción",     etapa: "Preparación set",   pct: 53  },
+  { fase: "Producción",     etapa: "Rodaje confirmado", pct: 58  },
   { fase: "Producción",     etapa: "Shoot day",         pct: 65  },
   { fase: "Producción",     etapa: "Wrap",              pct: 72  },
   { fase: "Post / Entrega", etapa: "Montaje offline",   pct: 78  },
@@ -130,6 +132,7 @@ export async function fetchProyectos(): Promise<Proyecto[]> {
           presentacion:  f["PRESENTACIÓN"]             ?? "",
           material:      Array.isArray(f["Material adicional"]) ? f["Material adicional"] : [],
           tareasCount:   Array.isArray(f["Tareas"]) ? f["Tareas"].length : 0,
+          encargado:     f["Encargado"] ?? "",
         });
       }
     } while (offset);

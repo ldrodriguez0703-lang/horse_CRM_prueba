@@ -3,6 +3,8 @@
 import { useState, useCallback } from "react";
 import { type Proyecto, fmt, PIPELINE_STAGES, PHASES, getPhase } from "@/lib/airtable";
 
+const ENCARGADOS = ["Jesús", "Diego", "Alejandro", "Luis Diego"];
+
 async function patchPipeline(recordId: string, fields: Record<string, unknown>) {
   await fetch("/api/pipeline", {
     method: "POST",
@@ -57,13 +59,14 @@ function etapaFromPct(pct: number) {
 }
 
 export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
-  const [selected,    setSelected]    = useState<Proyecto | null>(null);
-  const [tareas,      setTareas]      = useState("");
-  const [etapaKey,    setEtapaKey]    = useState<string>("");
-  const [filterFase,  setFilterFase]  = useState("Todas");
-  const [search,      setSearch]      = useState("");
-  // Optimistic pct overrides keyed by record ID
-  const [pctOverrides, setPctOverrides] = useState<Record<string, number>>({});
+  const [selected,      setSelected]      = useState<Proyecto | null>(null);
+  const [tareas,        setTareas]        = useState("");
+  const [encargado,     setEncargado]     = useState("");
+  const [etapaKey,      setEtapaKey]      = useState<string>("");
+  const [filterFase,    setFilterFase]    = useState("Todas");
+  const [search,        setSearch]        = useState("");
+  const [pctOverrides,  setPctOverrides]  = useState<Record<string, number>>({});
+  const [encargadoMap,  setEncargadoMap]  = useState<Record<string, string>>({});
 
   function effectivePct(p: Proyecto) {
     return pctOverrides[p.id] ?? p.porcentaje;
@@ -92,8 +95,13 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
     const stage = etapaFromPct(pct);
     setSelected(p);
     setEtapaKey(`${stage.fase}|${stage.etapa}`);
-    const saved = typeof window !== "undefined" ? localStorage.getItem(`tasks_${p.id}`) ?? "" : "";
-    setTareas(saved);
+    const savedTareas = typeof window !== "undefined" ? localStorage.getItem(`tasks_${p.id}`) ?? "" : "";
+    const savedEnc    = typeof window !== "undefined"
+      ? localStorage.getItem(`encargado_${p.id}`) ?? (p.encargado || "")
+      : (p.encargado || "");
+    setTareas(savedTareas);
+    setEncargado(savedEnc);
+    if (savedEnc) setEncargadoMap((m) => ({ ...m, [p.id]: savedEnc }));
   }
 
   function handleEtapaChange(key: string) {
@@ -102,11 +110,17 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
     const [fase, etapa] = key.split("|");
     const stage = PIPELINE_STAGES.find((s) => s.fase === fase && s.etapa === etapa);
     if (!stage) return;
-    // Optimistic: update UI immediately
     setPctOverrides((o) => ({ ...o, [selected.id]: stage.pct }));
     setSelected((s) => s ? { ...s, porcentaje: stage.pct } : s);
-    // Background PATCH to Airtable
     patchPipeline(selected.id, { Porcentaje: stage.pct });
+  }
+
+  function handleEncargadoChange(value: string) {
+    setEncargado(value);
+    if (!selected) return;
+    setEncargadoMap((m) => ({ ...m, [selected.id]: value }));
+    if (typeof window !== "undefined") localStorage.setItem(`encargado_${selected.id}`, value);
+    if (value) patchPipeline(selected.id, { Encargado: value });
   }
 
   const saveTareas = useCallback((id: string, text: string) => {
@@ -150,27 +164,33 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
         {/* Cards */}
         <div className="space-y-3 overflow-y-auto">
           {filtered.map((p) => {
-            const pct   = effectivePct(p);
-            const fase  = getPhase(pct);
-            const etapa = etapaFromPct(pct);
+            const pct        = effectivePct(p);
+            const fase       = getPhase(pct);
+            const etapa      = etapaFromPct(pct);
+            const cardEnc    = encargadoMap[p.id] || p.encargado;
             return (
               <div key={p.id} onClick={() => openDetail(p)}
                 className={`bg-[#1a1a1a] border rounded-xl p-4 cursor-pointer transition-all hover:border-[#F5C200] ${
                   selected?.id === p.id ? "border-[#F5C200]" : "border-[#2a2a2a]"
                 }`}>
-                <div className="flex items-start justify-between gap-3 mb-3">
+                {/* Top row: proyecto left | CLIENTE yellow bold right */}
+                <div className="flex items-start justify-between gap-3 mb-2">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[#FAFAFA] font-bold text-sm truncate">{p.cliente}</p>
-                      <p className="text-[#6b6b6b] text-sm truncate text-right">{p.proyecto}</p>
-                    </div>
+                    <p className="text-[#9b9b9b] text-xs truncate">{p.proyecto}</p>
                     <p className="text-[#6b6b6b] text-xs mt-0.5">
                       {p.representante}
                       {p.fechaEntrega && <> · <span className="text-[#F5C200]">{p.fechaEntrega}</span></>}
                     </p>
                   </div>
+                  <p className="text-[#F5C200] font-bold text-sm text-right flex-shrink-0 max-w-[45%] truncate">{p.cliente}</p>
                 </div>
 
+                {/* Price prominent */}
+                {p.totalAcordado > 0 && (
+                  <p className="text-[#F5C200] font-bold text-xl mb-2">{fmt(p.totalAcordado)}</p>
+                )}
+
+                {/* Badges + encargado + % */}
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium border"
                     style={{ background: `${fase.color}15`, color: fase.color, borderColor: `${fase.color}40` }}>
@@ -179,8 +199,12 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${ESTADO_STYLE[p.estadoNorm]}`}>
                     {p.estado}
                   </span>
-                  <span className="ml-auto text-sm font-bold text-[#F5C200]">{pct}%</span>
-                  {p.totalAcordado > 0 && <span className="text-xs text-[#6b6b6b]">{fmt(p.totalAcordado)}</span>}
+                  {cardEnc && (
+                    <span className="text-xs text-[#6b6b6b] bg-[#2a2a2a] px-2 py-0.5 rounded-full">
+                      {cardEnc}
+                    </span>
+                  )}
+                  <span className="ml-auto text-sm font-bold text-[#FAFAFA]">{pct}%</span>
                 </div>
 
                 <PhaseBar porcentaje={pct} />
@@ -209,6 +233,25 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
           </div>
 
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+            {/* ── Encargado ── */}
+            <div>
+              <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase mb-2">Encargado</p>
+              <select
+                value={encargado}
+                onChange={(e) => handleEncargadoChange(e.target.value)}
+                className={`w-full bg-[#1a1a1a] border rounded-lg px-3 py-2 text-sm text-[#FAFAFA] focus:outline-none transition-colors ${
+                  etapaKey && !encargado
+                    ? "border-[#F5C200] animate-pulse"
+                    : "border-[#2a2a2a] focus:border-[#F5C200]"
+                }`}>
+                <option value="">— Seleccionar encargado —</option>
+                {ENCARGADOS.map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+              {etapaKey && !encargado && (
+                <p className="text-xs text-[#F5C200] mt-1">Debes asignar un encargado para esta etapa</p>
+              )}
+            </div>
 
             {/* ── Selector de etapa ── */}
             <div>
