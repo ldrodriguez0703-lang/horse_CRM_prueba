@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { type Proyecto, fmt, PIPELINE_STAGES, PHASES, getPhase } from "@/lib/airtable";
+
 async function patchPipeline(recordId: string, fields: Record<string, unknown>) {
   await fetch("/api/pipeline", {
     method: "POST",
@@ -50,18 +51,29 @@ function PhaseBar({ porcentaje }: { porcentaje: number }) {
   );
 }
 
+function etapaFromPct(pct: number) {
+  const sorted = [...PIPELINE_STAGES].sort((a, b) => b.pct - a.pct);
+  return sorted.find((s) => pct >= s.pct) ?? PIPELINE_STAGES[0];
+}
+
 export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
   const [selected,    setSelected]    = useState<Proyecto | null>(null);
   const [tareas,      setTareas]      = useState("");
-  const [etapaKey,    setEtapaKey]    = useState<string>("");   // "fase|etapa"
-  const [saving,      setSaving]      = useState(false);
+  const [etapaKey,    setEtapaKey]    = useState<string>("");
   const [filterFase,  setFilterFase]  = useState("Todas");
   const [search,      setSearch]      = useState("");
+  // Optimistic pct overrides keyed by record ID
+  const [pctOverrides, setPctOverrides] = useState<Record<string, number>>({});
+
+  function effectivePct(p: Proyecto) {
+    return pctOverrides[p.id] ?? p.porcentaje;
+  }
 
   const activos = proyectos.filter((p) => p.estadoNorm !== "cancelado");
 
   const filtered = activos.filter((p) => {
-    const fase = getPhase(p.porcentaje).label;
+    const pct  = effectivePct(p);
+    const fase = getPhase(pct).label;
     return (
       (filterFase === "Todas" || fase === filterFase) &&
       (p.cliente.toLowerCase().includes(search.toLowerCase()) ||
@@ -72,33 +84,29 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
 
   const byPhase = PHASES.map((ph) => ({
     ...ph,
-    count: activos.filter((p) => getPhase(p.porcentaje).label === ph.label).length,
+    count: activos.filter((p) => getPhase(effectivePct(p)).label === ph.label).length,
   }));
 
-  // Etapa actual derivada del porcentaje
-  function etapaFromPct(pct: number) {
-    const sorted = [...PIPELINE_STAGES].sort((a, b) => b.pct - a.pct);
-    return sorted.find((s) => pct >= s.pct) ?? PIPELINE_STAGES[0];
-  }
-
   function openDetail(p: Proyecto) {
+    const pct   = effectivePct(p);
+    const stage = etapaFromPct(pct);
     setSelected(p);
-    const stage = etapaFromPct(p.porcentaje);
     setEtapaKey(`${stage.fase}|${stage.etapa}`);
     const saved = typeof window !== "undefined" ? localStorage.getItem(`tasks_${p.id}`) ?? "" : "";
     setTareas(saved);
   }
 
-  async function handleEtapaChange(key: string) {
+  function handleEtapaChange(key: string) {
     setEtapaKey(key);
     if (!selected) return;
     const [fase, etapa] = key.split("|");
     const stage = PIPELINE_STAGES.find((s) => s.fase === fase && s.etapa === etapa);
     if (!stage) return;
-    setSaving(true);
-    await patchPipeline(selected.id, { Porcentaje: stage.pct });
-    setSaving(false);
+    // Optimistic: update UI immediately
+    setPctOverrides((o) => ({ ...o, [selected.id]: stage.pct }));
     setSelected((s) => s ? { ...s, porcentaje: stage.pct } : s);
+    // Background PATCH to Airtable
+    patchPipeline(selected.id, { Porcentaje: stage.pct });
   }
 
   const saveTareas = useCallback((id: string, text: string) => {
@@ -106,7 +114,6 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
     patchPipeline(id, { "Tareas pendientes": text });
   }, []);
 
-  // Agrupar etapas por fase para el select
   const fases = PHASES.map((ph) => ({
     fase: ph.label,
     color: ph.color,
@@ -143,14 +150,14 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
         {/* Cards */}
         <div className="space-y-3 overflow-y-auto">
           {filtered.map((p) => {
-            const fase = getPhase(p.porcentaje);
-            const etapa = etapaFromPct(p.porcentaje);
+            const pct   = effectivePct(p);
+            const fase  = getPhase(pct);
+            const etapa = etapaFromPct(pct);
             return (
               <div key={p.id} onClick={() => openDetail(p)}
                 className={`bg-[#1a1a1a] border rounded-xl p-4 cursor-pointer transition-all hover:border-[#F5C200] ${
                   selected?.id === p.id ? "border-[#F5C200]" : "border-[#2a2a2a]"
                 }`}>
-                {/* Nombre cliente | nombre proyecto */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
@@ -164,7 +171,6 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
                   </div>
                 </div>
 
-                {/* Badges + % */}
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium border"
                     style={{ background: `${fase.color}15`, color: fase.color, borderColor: `${fase.color}40` }}>
@@ -173,11 +179,11 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${ESTADO_STYLE[p.estadoNorm]}`}>
                     {p.estado}
                   </span>
-                  <span className="ml-auto text-sm font-bold text-[#F5C200]">{p.porcentaje}%</span>
+                  <span className="ml-auto text-sm font-bold text-[#F5C200]">{pct}%</span>
                   {p.totalAcordado > 0 && <span className="text-xs text-[#6b6b6b]">{fmt(p.totalAcordado)}</span>}
                 </div>
 
-                <PhaseBar porcentaje={p.porcentaje} />
+                <PhaseBar porcentaje={pct} />
               </div>
             );
           })}
@@ -198,7 +204,7 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
               <button onClick={() => setSelected(null)} className="text-[#6b6b6b] hover:text-[#FAFAFA] text-xl flex-shrink-0">×</button>
             </div>
             <div className="mt-3">
-              <PhaseBar porcentaje={selected.porcentaje} />
+              <PhaseBar porcentaje={effectivePct(selected)} />
             </div>
           </div>
 
@@ -215,10 +221,10 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
                     </p>
                     <div className="grid grid-cols-2 gap-1">
                       {f.etapas.map((s) => {
-                        const key = `${s.fase}|${s.etapa}`;
+                        const key    = `${s.fase}|${s.etapa}`;
                         const active = etapaKey === key;
                         return (
-                          <button key={key} onClick={() => handleEtapaChange(key)} disabled={saving}
+                          <button key={key} onClick={() => handleEtapaChange(key)}
                             className={`text-left px-3 py-1.5 rounded-lg text-xs border transition-all ${
                               active
                                 ? "text-[#0a0a0a] font-semibold border-transparent"
@@ -236,7 +242,6 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
                   </div>
                 ))}
               </div>
-              {saving && <p className="text-xs text-[#F5C200] mt-2">Guardando en Airtable...</p>}
             </div>
 
             {/* ── Tareas pendientes ── */}

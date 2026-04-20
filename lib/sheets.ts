@@ -25,10 +25,18 @@ export interface MonthlyStats {
   restante: number;
 }
 
+export interface VendedorMonthData {
+  mes: string;
+  mesKey: string;
+  totales: Record<string, number>;
+}
+
 export interface DashboardData {
   ventas: SalesRow[];
   arRows: SalesRow[];
   monthlyStats: MonthlyStats[];
+  vendedorData: VendedorMonthData[];
+  vendedores: string[];
   metaMensual: number;
   totalConfirmado: number;
   totalDeals: number;
@@ -180,6 +188,24 @@ function buildResult(ventas: SalesRow[]): DashboardData {
       };
     });
 
+  // Vendedor aggregation: only Confirmadas, grouped by (mesKey, vendedor)
+  const vendorByMonth: Record<string, Record<string, number>> = {};
+  const allVendors = new Set<string>();
+  ventas.forEach((v) => {
+    if (!v.mes || v.estado !== "Confirmada" || !v.vendedor) return;
+    const key = mesToKey(v.mes);
+    const name = v.vendedor.trim();
+    allVendors.add(name);
+    if (!vendorByMonth[key]) vendorByMonth[key] = {};
+    vendorByMonth[key][name] = (vendorByMonth[key][name] ?? 0) + v.valor;
+  });
+  const vendedores = [...allVendors].sort();
+  const vendedorData: VendedorMonthData[] = monthlyStats.map((m) => ({
+    mes: m.mes,
+    mesKey: m.mesKey,
+    totales: Object.fromEntries(vendedores.map((v) => [v, vendorByMonth[m.mesKey]?.[v] ?? 0])),
+  }));
+
   const totalConfirmado     = ventas.filter((v) => v.estado === "Confirmada").reduce((s, v) => s + v.valor, 0);
   const totalDeals          = ventas.filter((v) => v.estado === "Deal").reduce((s, v) => s + v.valor, 0);
   const totalPendienteCobro = arRows.reduce((s, v) => s + v.valor, 0);
@@ -188,6 +214,8 @@ function buildResult(ventas: SalesRow[]): DashboardData {
     ventas,
     arRows,
     monthlyStats,
+    vendedorData,
+    vendedores,
     metaMensual: META,
     totalConfirmado,
     totalDeals,

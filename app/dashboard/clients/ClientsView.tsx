@@ -1,138 +1,264 @@
 "use client";
 
-import { useState } from "react";
-import { type Proyecto, fmt } from "@/lib/airtable";
+import { useState, useRef } from "react";
+import { type Proyecto, fmt, PIPELINE_STAGES, getPhase } from "@/lib/airtable";
 
-// Excluir: aun_no, cancelado, finalizado
-const EXCLUDED: Proyecto["estadoNorm"][] = ["aun_no", "cancelado", "finalizado"];
+const BASE_ID  = "appKEdyjyWLAT7dHQ";
+const TABLE_ID = "tblaWMR3gJbd2xnw4";
 
 const ESTADO_STYLE: Record<string, string> = {
   confirmado: "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]",
   en_curso:   "bg-[#4a9eff20] text-[#4a9eff] border-[#4a9eff40]",
+  aun_no:     "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
+  cancelado:  "bg-[#ff444420] text-[#ff6b6b] border-[#ff444440]",
+  finalizado: "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]",
   otro:       "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
 };
 
-type FilterKey = "todos" | "confirmado" | "en_curso";
+// Priority for sorting by estado (lower = first)
+function estadoPriority(raw: string): number {
+  const v = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (v.includes("aprobado") || v.includes("confirm"))  return 1;
+  if (v.includes("seguimiento"))                        return 2;
+  if (v.includes("cotizar") || v.includes("proceso") || v.includes("curso")) return 3;
+  if (v.includes("editar") || v.includes("revis"))      return 4;
+  if (v.includes("aun") || v.includes("pendiente") || v.includes("prospecto")) return 5;
+  if (v.includes("cancel") || v.includes("muerto"))     return 6;
+  return 7;
+}
+
+function etapaLabel(pct: number): string {
+  const sorted = [...PIPELINE_STAGES].sort((a, b) => b.pct - a.pct);
+  return sorted.find((s) => pct >= s.pct)?.etapa ?? "Propuesta";
+}
+
+function uniqueEstados(proyectos: Proyecto[]): string[] {
+  const map = new Map<string, number>();
+  for (const p of proyectos) {
+    if (!map.has(p.estado)) map.set(p.estado, estadoPriority(p.estado));
+  }
+  return [...map.entries()].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(([e]) => e);
+}
+
+type SortKey = "cliente" | "proyecto" | "estado" | "porcentaje";
+type SortDir = "asc" | "desc";
+type ColWidths = { cliente: number; proyecto: number; estado: number; porcentaje: number };
 
 export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
-  const visible = proyectos.filter((p) => !EXCLUDED.includes(p.estadoNorm));
+  const [selected,      setSelected]      = useState<Proyecto | null>(null);
+  const [search,        setSearch]        = useState("");
+  const [filterEstado,  setFilterEstado]  = useState<string | null>(null);
+  const [sortKey,       setSortKey]       = useState<SortKey>("cliente");
+  const [sortDir,       setSortDir]       = useState<SortDir>("asc");
+  const [colWidths,     setColWidths]     = useState<ColWidths>({ cliente: 220, proyecto: 260, estado: 160, porcentaje: 150 });
 
-  const [selected, setSelected] = useState<Proyecto | null>(null);
-  const [search,   setSearch]   = useState("");
-  const [filter,   setFilter]   = useState<FilterKey>("todos");
+  const dragRef = useRef<{ col: keyof ColWidths; startX: number; startW: number } | null>(null);
 
-  // Sumas por categoría
-  const sum = (norm?: string) =>
-    visible.filter((p) => !norm || p.estadoNorm === norm).reduce((s, p) => s + p.totalAcordado, 0);
+  const estados = uniqueEstados(proyectos);
 
-  const kpis: { key: FilterKey; label: string; count: number; total: number; accent?: boolean }[] = [
-    { key: "todos",      label: "Total proyectos", count: visible.length,                                      total: sum()           },
-    { key: "confirmado", label: "Confirmados",      count: visible.filter(p => p.estadoNorm === "confirmado").length, total: sum("confirmado"), accent: true },
-    { key: "en_curso",   label: "En proceso",       count: visible.filter(p => p.estadoNorm === "en_curso").length,   total: sum("en_curso")  },
-  ];
-
-  const filtered = visible.filter((p) =>
-    (filter === "todos" || p.estadoNorm === filter) &&
+  const filtered = proyectos.filter((p) =>
+    (filterEstado === null || p.estado === filterEstado) &&
     (p.cliente.toLowerCase().includes(search.toLowerCase()) ||
      p.proyecto.toLowerCase().includes(search.toLowerCase()) ||
      p.representante.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0;
+    if      (sortKey === "cliente")    cmp = a.cliente.localeCompare(b.cliente);
+    else if (sortKey === "proyecto")   cmp = a.proyecto.localeCompare(b.proyecto);
+    else if (sortKey === "estado")     cmp = estadoPriority(a.estado) - estadoPriority(b.estado);
+    else if (sortKey === "porcentaje") cmp = a.porcentaje - b.porcentaje;
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
+  function startDrag(col: keyof ColWidths, e: React.MouseEvent) {
+    e.preventDefault();
+    dragRef.current = { col, startX: e.clientX, startW: colWidths[col] };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = ev.clientX - dragRef.current.startX;
+      setColWidths((w) => ({ ...w, [dragRef.current!.col]: Math.max(80, dragRef.current!.startW + delta) }));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  const COL_LABELS: Record<SortKey, string> = {
+    cliente: "Cliente", proyecto: "Proyecto", estado: "Estado", porcentaje: "% Avance",
+  };
+
   return (
     <div className="flex gap-5 h-full">
-      <div className="flex-1 min-w-0 flex flex-col gap-4">
+      <div className="flex-1 min-w-0 flex flex-col gap-4 overflow-hidden">
 
-        {/* ── KPI buttons ── */}
-        <div className="grid grid-cols-3 gap-3">
-          {kpis.map((k) => (
-            <button key={k.key} onClick={() => setFilter(k.key)}
-              className={`rounded-xl p-4 border text-left transition-all ${
-                filter === k.key
-                  ? k.accent
-                    ? "bg-[#F5C200] border-[#F5C200]"
-                    : "bg-[#1a1a1a] border-[#F5C200]"
-                  : "bg-[#1a1a1a] border-[#2a2a2a] hover:border-[#F5C200]"
-              }`}>
-              <p className={`text-xs font-medium tracking-widest uppercase mb-1 ${filter === k.key && k.accent ? "text-[#0a0a0a80]" : "text-[#6b6b6b]"}`}>
-                {k.label}
-              </p>
-              <p className={`text-xl font-bold ${filter === k.key && k.accent ? "text-[#0a0a0a]" : "text-[#FAFAFA]"}`}>
-                {fmt(k.total)}
-              </p>
-              <p className={`text-xs mt-0.5 ${filter === k.key && k.accent ? "text-[#0a0a0a70]" : "text-[#6b6b6b]"}`}>
-                {k.count} proyecto{k.count !== 1 ? "s" : ""}
-              </p>
-            </button>
-          ))}
+        {/* KPI buttons — one per estado value */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setFilterEstado(null)}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              filterEstado === null
+                ? "bg-[#F5C200] text-[#0a0a0a] border-[#F5C200]"
+                : "bg-[#1a1a1a] text-[#6b6b6b] border-[#2a2a2a] hover:border-[#F5C200] hover:text-[#FAFAFA]"
+            }`}>
+            Todos · {proyectos.length}
+          </button>
+          {estados.map((est) => {
+            const count = proyectos.filter((p) => p.estado === est).length;
+            return (
+              <button key={est} onClick={() => setFilterEstado(filterEstado === est ? null : est)}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                  filterEstado === est
+                    ? "bg-[#F5C200] text-[#0a0a0a] border-[#F5C200]"
+                    : "bg-[#1a1a1a] text-[#6b6b6b] border-[#2a2a2a] hover:border-[#F5C200] hover:text-[#FAFAFA]"
+                }`}>
+                {est} · {count}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Búsqueda */}
+        {/* Search */}
         <input type="text" placeholder="Buscar cliente, proyecto o representante..."
           value={search} onChange={(e) => setSearch(e.target.value)}
           className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-2 text-sm text-[#FAFAFA] placeholder-[#6b6b6b] focus:outline-none focus:border-[#F5C200]"
         />
 
-        {/* Lista */}
-        <div className="space-y-2 overflow-y-auto">
-          {filtered.length === 0 && <p className="text-[#6b6b6b] text-sm pt-2">Sin resultados.</p>}
-          {filtered.map((p) => (
-            <div key={p.id} onClick={() => setSelected(p)}
-              className={`bg-[#1a1a1a] border rounded-xl px-4 py-3 cursor-pointer transition-all hover:border-[#F5C200] ${
-                selected?.id === p.id ? "border-[#F5C200]" : "border-[#2a2a2a]"
-              }`}>
-              {/* Orden: cliente | proyecto | monto | estado */}
-              <div className="flex items-center gap-3">
-                {/* Avatar */}
-                <div className="w-8 h-8 rounded-full bg-[#F5C20020] border border-[#F5C20040] flex items-center justify-center flex-shrink-0">
-                  <span className="text-[#F5C200] font-bold text-xs">{p.cliente[0]}</span>
-                </div>
-                {/* Cliente */}
-                <div className="w-36 flex-shrink-0">
-                  <p className="text-[#FAFAFA] font-semibold text-sm truncate">{p.cliente}</p>
-                  <p className="text-[#6b6b6b] text-xs truncate">{p.representante}</p>
-                </div>
-                {/* Proyecto */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-[#9b9b9b] text-sm truncate">{p.proyecto || p.nombre}</p>
-                  {p.fechaEntrega && <p className="text-[#3a3a3a] text-xs">{p.fechaEntrega}</p>}
-                </div>
-                {/* Monto */}
-                <p className="text-[#F5C200] font-bold text-sm flex-shrink-0 w-24 text-right">
-                  {p.totalAcordado > 0 ? fmt(p.totalAcordado) : "—"}
-                </p>
-                {/* Estado */}
-                <span className={`text-xs px-2.5 py-1 rounded-full border font-medium flex-shrink-0 ${ESTADO_STYLE[p.estadoNorm] ?? ESTADO_STYLE.otro}`}>
-                  {p.estado}
-                </span>
-              </div>
-            </div>
-          ))}
+        {/* Table */}
+        <div className="flex-1 overflow-auto rounded-xl border border-[#2a2a2a]">
+          <table className="text-sm border-collapse" style={{ minWidth: "100%", tableLayout: "fixed" }}>
+            <colgroup>
+              {(["cliente", "proyecto", "estado", "porcentaje"] as SortKey[]).map((col) => (
+                <col key={col} style={{ width: colWidths[col] }} />
+              ))}
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#111111] border-b border-[#2a2a2a]">
+                {(["cliente", "proyecto", "estado", "porcentaje"] as SortKey[]).map((col) => (
+                  <th key={col} className="relative text-left py-2.5 px-3 text-xs text-[#6b6b6b] font-medium tracking-widest uppercase select-none">
+                    <button onClick={() => handleSort(col)} className="flex items-center gap-1 hover:text-[#FAFAFA] transition-colors">
+                      {COL_LABELS[col]}
+                      {sortKey === col && <span className="text-[#F5C200]">{sortDir === "asc" ? "↑" : "↓"}</span>}
+                    </button>
+                    <div
+                      onMouseDown={(e) => startDrag(col, e)}
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#F5C20030] transition-colors"
+                    />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-[#6b6b6b] text-sm">Sin resultados.</td>
+                </tr>
+              )}
+              {sorted.map((p) => {
+                const fase  = getPhase(p.porcentaje);
+                const etapa = etapaLabel(p.porcentaje);
+                return (
+                  <tr key={p.id}
+                    onClick={() => setSelected((s) => s?.id === p.id ? null : p)}
+                    className={`border-b border-[#1a1a1a] cursor-pointer transition-colors hover:bg-[#1a1a1a] ${
+                      selected?.id === p.id ? "bg-[#1a1a1a] outline outline-1 outline-[#F5C20040]" : ""
+                    }`}>
+                    {/* Cliente */}
+                    <td className="py-2.5 px-3 overflow-hidden">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-[#F5C20020] border border-[#F5C20040] flex items-center justify-center flex-shrink-0">
+                          <span className="text-[#F5C200] font-bold text-[10px]">{p.cliente[0]}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[#FAFAFA] font-semibold truncate text-sm">{p.cliente}</p>
+                          <p className="text-[#6b6b6b] text-xs truncate">{p.representante}</p>
+                        </div>
+                      </div>
+                    </td>
+                    {/* Proyecto */}
+                    <td className="py-2.5 px-3 overflow-hidden">
+                      <p className="text-[#9b9b9b] text-sm truncate">{p.proyecto || p.nombre}</p>
+                      {p.fechaEntrega && <p className="text-[#3a3a3a] text-xs">{p.fechaEntrega}</p>}
+                    </td>
+                    {/* Estado */}
+                    <td className="py-2.5 px-3">
+                      <span className={`text-xs px-2.5 py-1 rounded-full border font-medium whitespace-nowrap ${ESTADO_STYLE[p.estadoNorm] ?? ESTADO_STYLE.otro}`}>
+                        {p.estado}
+                      </span>
+                    </td>
+                    {/* % Avance */}
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-[#2a2a2a] rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${p.porcentaje}%`, background: fase.color }} />
+                        </div>
+                        <span className="text-xs text-[#FAFAFA] font-medium w-8 text-right flex-shrink-0">{p.porcentaje}%</span>
+                      </div>
+                      <p className="text-[10px] text-[#6b6b6b] mt-0.5 truncate">{etapa}</p>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Panel detalle */}
+      {/* ── Sidebar detalle ── */}
       {selected && (
         <div className="w-80 flex-shrink-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl flex flex-col overflow-hidden max-h-[calc(100vh-8rem)] shadow-2xl">
           <div className="p-5 border-b border-[#1a1a1a] flex items-start justify-between gap-2">
-            <div>
-              <p className="text-[#FAFAFA] font-bold">{selected.cliente}</p>
-              {selected.proyecto && <p className="text-[#6b6b6b] text-xs mt-0.5">{selected.proyecto}</p>}
-              <div className="flex items-center gap-2 mt-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-[#FAFAFA] font-bold truncate">{selected.cliente}</p>
+              {selected.proyecto && <p className="text-[#6b6b6b] text-xs mt-0.5 truncate">{selected.proyecto}</p>}
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${ESTADO_STYLE[selected.estadoNorm] ?? ESTADO_STYLE.otro}`}>
                   {selected.estado}
                 </span>
-                <span className="text-[#F5C200] font-bold text-sm">{fmt(selected.totalAcordado)}</span>
+                {selected.totalAcordado > 0 && (
+                  <span className="text-[#F5C200] font-bold text-sm">{fmt(selected.totalAcordado)}</span>
+                )}
               </div>
             </div>
-            <button onClick={() => setSelected(null)} className="text-[#6b6b6b] hover:text-[#FAFAFA] text-xl">×</button>
+            <button onClick={() => setSelected(null)} className="text-[#6b6b6b] hover:text-[#FAFAFA] text-xl flex-shrink-0">×</button>
           </div>
+
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
             <Section label="General">
-              <Row k="Representante"   v={selected.representante} />
-              <Row k="Fecha creación"  v={selected.fechaCreacion} />
-              <Row k="Fecha entrega"   v={selected.fechaEntrega || "—"} />
-              <Row k="Avance"          v={`${selected.porcentaje}%`} />
+              <Row k="Representante" v={selected.representante} />
+              <Row k="Fecha creación" v={selected.fechaCreacion} />
+              <Row k="Fecha entrega" v={selected.fechaEntrega || "—"} />
+              <Row k="Avance" v={`${selected.porcentaje}%`} />
             </Section>
+
+            {/* Documentos — siempre visibles */}
+            <Section label="Documentos">
+              {selected.presentacion
+                ? <a href={selected.presentacion} target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Presentación</a>
+                : <p className="text-xs text-[#3a3a3a]">Sin presentación</p>
+              }
+              {selected.proforma && (
+                <a href={selected.proforma} target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Proforma</a>
+              )}
+              <a
+                href={`https://airtable.com/${BASE_ID}/${TABLE_ID}/${selected.id}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-xs text-[#4a9eff] hover:underline block mt-1">
+                ↗ Ver en Airtable
+              </a>
+            </Section>
+
             {selected.descripcion && (
               <Section label="Descripción">
                 <p className="text-[#FAFAFA] text-xs leading-relaxed bg-[#1a1a1a] rounded-lg p-3 border border-[#2a2a2a] max-h-32 overflow-y-auto">
@@ -140,12 +266,7 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
                 </p>
               </Section>
             )}
-            {(selected.proforma || selected.presentacion) && (
-              <Section label="Documentos">
-                {selected.proforma     && <a href={selected.proforma}    target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Proforma</a>}
-                {selected.presentacion && <a href={selected.presentacion} target="_blank" rel="noopener noreferrer" className="text-xs text-[#F5C200] hover:underline block">↗ Presentación</a>}
-              </Section>
-            )}
+
             {selected.material.length > 0 && (
               <Section label={`Material (${selected.material.length})`}>
                 <div className="grid grid-cols-3 gap-1.5">
@@ -155,7 +276,9 @@ export default function ClientsView({ proyectos }: { proyectos: Proyecto[] }) {
                       {att.type.startsWith("image/") && att.thumbnails?.small
                         // eslint-disable-next-line @next/next/no-img-element
                         ? <img src={att.thumbnails.small.url} alt={att.filename} className="w-full h-full object-cover" />
-                        : <div className="w-full h-full flex items-center justify-center"><span className="text-[9px] text-[#6b6b6b] text-center px-1 line-clamp-2">{att.filename}</span></div>
+                        : <div className="w-full h-full flex items-center justify-center">
+                            <span className="text-[9px] text-[#6b6b6b] text-center px-1 line-clamp-2">{att.filename}</span>
+                          </div>
                       }
                     </a>
                   ))}

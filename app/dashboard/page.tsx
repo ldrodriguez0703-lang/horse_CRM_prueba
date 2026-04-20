@@ -2,6 +2,7 @@ import { fetchSheetsData } from "@/lib/sheets";
 import { fetchProyectos, getPhase } from "@/lib/airtable";
 import SalesChart from "@/components/SalesChart";
 import MonthlyDonut from "@/components/MonthlyDonut";
+import VendedorChart from "@/components/VendedorChart";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(n);
@@ -115,6 +116,14 @@ export default async function DashboardPage() {
           })}
         </div>
       </div>
+
+      {/* ── Ventas por vendedor ── */}
+      {d.vendedores.length > 0 && (
+        <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-5">
+          <p className="text-sm font-medium text-[#FAFAFA] mb-4">Confirmadas por Vendedor</p>
+          <VendedorChart data={d.vendedorData} vendedores={d.vendedores} />
+        </div>
+      )}
 
       {/* ── Donuts por mes ── */}
       <div className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] p-5">
