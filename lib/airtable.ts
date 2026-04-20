@@ -46,6 +46,7 @@ export const PIPELINE_STAGES = [
   { fase: "Post / Entrega", etapa: "VFX",               pct: 95  },
   { fase: "Post / Entrega", etapa: "Entrega final",     pct: 97  },
   { fase: "Cerrado",        etapa: "Cerrado",           pct: 100 },
+  { fase: "Cerrado",        etapa: "Muerto",            pct: 100 },
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];

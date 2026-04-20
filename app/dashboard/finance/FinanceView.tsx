@@ -73,7 +73,7 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
   const [items,        setItems]        = useState<BudgetItem[]>(DEFAULT_ITEMS);
   const [factMap,      setFactMap]      = useState<Record<string, FacturacionVal>>({});
   const [statusMap,    setStatusMap]    = useState<Record<string, StatusVal>>({});
-  const [estadoMap,    setEstadoMap]    = useState<Record<string, string>>({});
+  const [pagadoMap,    setPagadoMap]    = useState<Record<string, number>>({});
   const [filterStatus, setFilterStatus] = useState<StatusVal | "Todos">("Todos");
 
   const facturables = proyectos.filter((p) => isFacturable(p.estado));
@@ -82,14 +82,18 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
     if (typeof window === "undefined") return;
     const fMap: Record<string, FacturacionVal> = {};
     const sMap: Record<string, StatusVal>      = {};
+    const pMap: Record<string, number>         = {};
     for (const p of facturables) {
       const f = localStorage.getItem(`facturacion_${p.id}`) as FacturacionVal | null;
       const s = localStorage.getItem(`status_${p.id}`)      as StatusVal      | null;
-      if (f) fMap[p.id] = f;
-      if (s) sMap[p.id] = s;
+      const pg = localStorage.getItem(`pagado_${p.id}`);
+      if (f)  fMap[p.id] = f;
+      if (s)  sMap[p.id] = s;
+      if (pg) pMap[p.id] = parseFloat(pg);
     }
     setFactMap(fMap);
     setStatusMap(sMap);
+    setPagadoMap(pMap);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -105,9 +109,10 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
     patch(id, { Status: value });
   }
 
-  function handleEstado(id: string, value: string) {
-    setEstadoMap((m) => ({ ...m, [id]: value }));
-    patch(id, { ESTADO: value });
+  function handlePagado(id: string, value: number) {
+    setPagadoMap((m) => ({ ...m, [id]: value }));
+    if (typeof window !== "undefined") localStorage.setItem(`pagado_${id}`, String(value));
+    patch(id, { Pagado: value });
   }
 
   const displayed = facturables.filter((p) =>
@@ -115,7 +120,6 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
   );
 
   const budgetTotal = items.reduce((s, i) => s + i.qty * i.dias * i.tarifa, 0);
-  const allEstados  = [...new Set(proyectos.map((p) => p.estado))].sort();
 
   // Totals per status for KPI buttons
   function sumByStatus(s: StatusVal | "") {
@@ -194,9 +198,10 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
                   <tr><td colSpan={8} className="py-8 text-center text-[#6b6b6b] text-sm">Sin proyectos.</td></tr>
                 )}
                 {displayed.map((p, i) => {
-                  const fact   = factMap[p.id]   || "";
-                  const status = statusMap[p.id]  || "";
-                  const estado = estadoMap[p.id]  || p.estado;
+                  const fact     = factMap[p.id]  || "";
+                  const status   = statusMap[p.id] || "";
+                  const pagado   = pagadoMap[p.id] ?? 0;
+                  const pendiente = Math.max(0, p.totalAcordado - pagado);
                   return (
                     <tr key={p.id} className={`border-b border-[#1f1f1f] hover:bg-[#2a2a2a20] transition-colors ${status === "Mora" ? "bg-[#ff444406]" : ""}`}>
                       <td className="py-3 px-4 text-[#6b6b6b] font-mono text-xs">{String(i + 1).padStart(2, "0")}</td>
@@ -207,42 +212,57 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
                       <td className="py-3 px-4 text-[#9b9b9b] max-w-[160px]">
                         <p className="truncate">{p.proyecto || p.nombre}</p>
                       </td>
-                      <td className="py-3 px-4 text-[#F5C200] font-semibold whitespace-nowrap">
+                      {/* Total */}
+                      <td className="py-3 px-4 text-[#FAFAFA] font-semibold whitespace-nowrap">
                         {p.totalAcordado > 0 ? fmt(p.totalAcordado) : "—"}
                       </td>
-                      {/* Status — old style, changeable */}
+                      {/* Pagado — editable */}
                       <td className="py-3 px-4">
-                        <select
-                          value={status}
-                          onChange={(e) => handleStatus(p.id, e.target.value as StatusVal)}
+                        <input
+                          type="number" min="0" value={pagado === 0 ? "" : pagado}
+                          placeholder="0"
+                          onChange={(e) => handlePagado(p.id, parseFloat(e.target.value) || 0)}
                           onClick={(e) => e.stopPropagation()}
-                          className={`border rounded-lg px-2 py-1 text-xs font-medium focus:outline-none cursor-pointer min-w-[110px] ${STATUS_STYLE[status]}`}>
-                          <option value="">— Status —</option>
-                          {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                          className="w-28 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg px-2 py-1 text-xs text-[#22c55e] text-right focus:outline-none focus:border-[#F5C200]"
+                        />
                       </td>
-                      {/* Estado — changeable */}
+                      {/* Pendiente — calculado */}
+                      <td className={`py-3 px-4 font-semibold whitespace-nowrap text-sm ${pendiente > 0 ? "text-[#F5C200]" : "text-[#6b6b6b]"}`}>
+                        {fmt(pendiente)}
+                      </td>
+                      {/* Status — colored badge overlay */}
                       <td className="py-3 px-4">
-                        <select
-                          value={estado}
-                          onChange={(e) => handleEstado(p.id, e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg px-2 py-1 text-xs text-[#FAFAFA] focus:outline-none focus:border-[#F5C200] cursor-pointer min-w-[120px]">
-                          {allEstados.map((e) => <option key={e} value={e}>{e}</option>)}
-                        </select>
+                        <div className="relative inline-block">
+                          <span className={`text-xs px-2.5 py-1 rounded-full border font-medium pointer-events-none ${STATUS_STYLE[status]}`}>
+                            {status || "— Status —"}
+                          </span>
+                          <select
+                            value={status}
+                            onChange={(e) => handleStatus(p.id, e.target.value as StatusVal)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute inset-0 opacity-0 w-full cursor-pointer">
+                            <option value="">— Status —</option>
+                            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </div>
                       </td>
                       {/* Facturación — changeable */}
                       <td className="py-3 px-4">
-                        <select
-                          value={fact}
-                          onChange={(e) => handleFacturacion(p.id, e.target.value as FacturacionVal)}
-                          onClick={(e) => e.stopPropagation()}
-                          className={`border rounded-lg px-2 py-1 text-xs font-medium focus:outline-none cursor-pointer min-w-[120px] ${FACT_STYLE[fact]}`}>
-                          <option value="">— Facturación —</option>
-                          <option value="Por facturar">Por facturar</option>
-                          <option value="Facturado">Facturado</option>
-                          <option value="N/A">N/A</option>
-                        </select>
+                        <div className="relative inline-block">
+                          <span className={`text-xs px-2.5 py-1 rounded-full border font-medium pointer-events-none ${FACT_STYLE[fact]}`}>
+                            {fact || "— Facturación —"}
+                          </span>
+                          <select
+                            value={fact}
+                            onChange={(e) => handleFacturacion(p.id, e.target.value as FacturacionVal)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute inset-0 opacity-0 w-full cursor-pointer">
+                            <option value="">— Facturación —</option>
+                            <option value="Por facturar">Por facturar</option>
+                            <option value="Facturado">Facturado</option>
+                            <option value="N/A">N/A</option>
+                          </select>
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-[#6b6b6b] text-xs whitespace-nowrap">
                         {p.fechaEntrega || "—"}

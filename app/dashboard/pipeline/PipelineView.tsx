@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { type Proyecto, fmt, PIPELINE_STAGES, PHASES, getPhase } from "@/lib/airtable";
 
 const ENCARGADOS = ["Jesús", "Diego", "Alejandro", "Luis Diego"];
@@ -80,6 +80,20 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
   const [search,           setSearch]           = useState("");
   const [pctOverrides,     setPctOverrides]     = useState<Record<string, number>>({});
   const [encargadoMap,     setEncargadoMap]     = useState<Record<string, string>>({});
+  const [etapaMap,         setEtapaMap]         = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const encMap: Record<string, string> = {};
+    const etMap: Record<string, string> = {};
+    proyectos.forEach((p) => {
+      const savedEnc = localStorage.getItem(`encargado_${p.id}`);
+      encMap[p.id] = savedEnc ?? p.encargado ?? "";
+      const savedEtapa = localStorage.getItem(`etapa_${p.id}`);
+      if (savedEtapa) etMap[p.id] = savedEtapa;
+    });
+    setEncargadoMap(encMap);
+    setEtapaMap(etMap);
+  }, [proyectos]);
 
   function effectivePct(p: Proyecto) {
     return pctOverrides[p.id] ?? p.porcentaje;
@@ -108,15 +122,14 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
   }));
 
   function openDetail(p: Proyecto) {
-    const pct   = effectivePct(p);
-    const stage = etapaFromPct(pct);
+    const pct        = effectivePct(p);
+    const savedEtapa = localStorage.getItem(`etapa_${p.id}`);
+    const key        = savedEtapa ?? (() => { const s = etapaFromPct(pct); return `${s.fase}|${s.etapa}`; })();
     setSelected(p);
-    setEtapaKey(`${stage.fase}|${stage.etapa}`);
-    const savedTareas = typeof window !== "undefined" ? localStorage.getItem(`tasks_${p.id}`) ?? "" : "";
-    const savedEnc    = typeof window !== "undefined"
-      ? localStorage.getItem(`encargado_${p.id}`) ?? (p.encargado || "")
-      : (p.encargado || "");
-    setTareas(savedTareas);
+    setEtapaKey(key);
+    setEtapaMap((m) => ({ ...m, [p.id]: key }));
+    setTareas(localStorage.getItem(`tasks_${p.id}`) ?? "");
+    const savedEnc = localStorage.getItem(`encargado_${p.id}`) ?? (p.encargado || "");
     setEncargado(savedEnc);
     if (savedEnc) setEncargadoMap((m) => ({ ...m, [p.id]: savedEnc }));
   }
@@ -128,7 +141,9 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
     const stage = PIPELINE_STAGES.find((s) => s.fase === fase && s.etapa === etapa);
     if (!stage) return;
     setPctOverrides((o) => ({ ...o, [selected.id]: stage.pct }));
+    setEtapaMap((m) => ({ ...m, [selected.id]: key }));
     setSelected((s) => s ? { ...s, porcentaje: stage.pct } : s);
+    localStorage.setItem(`etapa_${selected.id}`, key);
     patchPipeline(selected.id, { Porcentaje: stage.pct });
   }
 
@@ -206,10 +221,13 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
 
         {/* Cards */}
         <div className="space-y-3 overflow-y-auto">
-          {filtered.map((p) => {
+          {[...filtered].sort((a, b) => effectivePct(b) - effectivePct(a)).map((p) => {
             const pct     = effectivePct(p);
             const fase    = getPhase(pct);
-            const etapa   = etapaFromPct(pct);
+            const savedKey = etapaMap[p.id];
+            const etapa   = savedKey
+              ? (PIPELINE_STAGES.find((s) => `${s.fase}|${s.etapa}` === savedKey) ?? etapaFromPct(pct))
+              : etapaFromPct(pct);
             const cardEnc = encargadoMap[p.id] || p.encargado;
             const enc     = cardEnc ? encStyle(cardEnc) : null;
             const parts   = [p.proyecto, p.cliente, p.totalAcordado > 0 ? fmt(p.totalAcordado) : null].filter(Boolean);
