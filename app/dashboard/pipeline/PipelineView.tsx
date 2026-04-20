@@ -2,7 +2,13 @@
 
 import { useState, useCallback } from "react";
 import { type Proyecto, fmt, PIPELINE_STAGES, PHASES, getPhase } from "@/lib/airtable";
-import { updatePorcentaje, updateTareasPendientes } from "@/app/actions/pipeline";
+async function patchPipeline(recordId: string, fields: Record<string, unknown>) {
+  await fetch("/api/pipeline", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recordId, fields }),
+  });
+}
 
 const ESTADO_STYLE: Record<string, string> = {
   confirmado: "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]",
@@ -90,14 +96,14 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
     const stage = PIPELINE_STAGES.find((s) => s.fase === fase && s.etapa === etapa);
     if (!stage) return;
     setSaving(true);
-    await updatePorcentaje(selected.id, stage.pct);
+    await patchPipeline(selected.id, { Porcentaje: stage.pct });
     setSaving(false);
     setSelected((s) => s ? { ...s, porcentaje: stage.pct } : s);
   }
 
   const saveTareas = useCallback((id: string, text: string) => {
     if (typeof window !== "undefined") localStorage.setItem(`tasks_${id}`, text);
-    updateTareasPendientes(id, text);
+    patchPipeline(id, { "Tareas pendientes": text });
   }, []);
 
   // Agrupar etapas por fase para el select
