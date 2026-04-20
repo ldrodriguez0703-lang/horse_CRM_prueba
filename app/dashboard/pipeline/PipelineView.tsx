@@ -85,7 +85,9 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
     return pctOverrides[p.id] ?? p.porcentaje;
   }
 
-  const activos = proyectos.filter((p) => p.estadoNorm !== "cancelado");
+  const activos = proyectos.filter((p) =>
+    p.estadoNorm !== "cancelado" && p.estadoNorm !== "aun_no" && p.estadoNorm !== "finalizado"
+  );
 
   const filtered = activos.filter((p) => {
     const pct     = effectivePct(p);
