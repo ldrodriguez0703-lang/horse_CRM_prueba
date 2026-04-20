@@ -84,6 +84,7 @@ const TOKEN = process.env.AIRTABLE_TOKEN ?? "";
 function normalizeEstado(raw: string): Proyecto["estadoNorm"] {
   const v = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (v.includes("cancel"))                                                         return "cancelado";
+  if (v.includes("aprobado"))                                                       return "confirmado";
   if (v.includes("finaliz") || v.includes("entregado") || v.includes("complet") || v.includes("terminado")) return "finalizado";
   if (v.includes("confirm"))                                                        return "confirmado";
   if (v.includes("proceso") || v.includes("curso") || v.includes("progreso") || v.includes("activo")) return "en_curso";
