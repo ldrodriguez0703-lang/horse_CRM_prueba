@@ -91,11 +91,26 @@ export async function fetchSheetsData(): Promise<DashboardData> {
   }
 }
 
+// Parser CSV que respeta comas dentro de comillas: "1,769.91" no se parte
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQ = !inQ; }
+    else if (ch === "," && !inQ) { result.push(cur.trim()); cur = ""; }
+    else { cur += ch; }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
 function processCSV(csv: string): DashboardData {
   const lines = csv.split("\n").filter((l) => l.trim());
   if (lines.length < 2) return buildResult(getMockRows());
 
-  const headers = lines[0].split(",").map((h) => norm(h.replace(/^"|"$/g, "")));
+  const headers = parseCSVLine(lines[0]).map((h) => norm(h));
   const col = (name: string) => headers.findIndex((h) => h.includes(norm(name)));
 
   const iId        = col("column 7") !== -1 ? col("column 7") : 0;
@@ -111,7 +126,7 @@ function processCSV(csv: string): DashboardData {
   const rows: SalesRow[] = lines
     .slice(1)
     .map((line): SalesRow | null => {
-      const c = line.split(",").map((x) => x.replace(/^"|"$/g, "").trim());
+      const c = parseCSVLine(line);
       const cliente = iCliente !== -1 ? c[iCliente] : "";
       if (!cliente) return null;
       return {
