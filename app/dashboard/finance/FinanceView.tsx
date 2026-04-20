@@ -4,24 +4,6 @@ import { useState, useEffect } from "react";
 import { type Proyecto, fmt } from "@/lib/airtable";
 
 type FacturacionVal = "Facturado" | "Por facturar" | "N/A" | "";
-type StatusVal      = "Pagada" | "Pendiente" | "Mora" | "Parcial" | "";
-
-const STATUS_OPTIONS: StatusVal[] = ["Pagada", "Pendiente", "Mora", "Parcial"];
-
-const STATUS_STYLE: Record<string, string> = {
-  Pagada:   "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]",
-  Parcial:  "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]",
-  Pendiente:"bg-[#ffffff15] text-[#FAFAFA] border-[#ffffff30]",
-  Mora:     "bg-[#ff444420] text-[#ff4444] border-[#ff444440]",
-  "":       "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
-};
-
-const FACT_STYLE: Record<string, string> = {
-  "Facturado":    "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]",
-  "Por facturar": "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]",
-  "N/A":          "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
-  "":             "bg-[#ffffff10] text-[#9b9b9b] border-[#ffffff20]",
-};
 
 async function patch(recordId: string, fields: Record<string, unknown>) {
   await fetch("/api/pipeline", {
@@ -69,100 +51,57 @@ const DOC_STYLE: Record<string, string> = {
 };
 
 export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
-  const [tab,          setTab]          = useState<"facturacion" | "presupuesto" | "legal">("facturacion");
-  const [items,        setItems]        = useState<BudgetItem[]>(DEFAULT_ITEMS);
-  const [factMap,      setFactMap]      = useState<Record<string, FacturacionVal>>({});
-  const [statusMap,    setStatusMap]    = useState<Record<string, StatusVal>>({});
-  const [pagadoMap,    setPagadoMap]    = useState<Record<string, number>>({});
-  const [filterStatus, setFilterStatus] = useState<StatusVal | "Todos">("Todos");
+  const [tab,       setTab]       = useState<"facturacion" | "presupuesto" | "legal">("facturacion");
+  const [items,     setItems]     = useState<BudgetItem[]>(DEFAULT_ITEMS);
+  const [factMap,   setFactMap]   = useState<Record<string, FacturacionVal>>({});
+  const [estadoMap, setEstadoMap] = useState<Record<string, string>>({});
 
   const facturables = proyectos.filter((p) => isFacturable(p.estado));
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const fMap: Record<string, FacturacionVal> = {};
-    const sMap: Record<string, StatusVal>      = {};
-    const pMap: Record<string, number>         = {};
+    const map: Record<string, FacturacionVal> = {};
     for (const p of facturables) {
-      const f = localStorage.getItem(`facturacion_${p.id}`) as FacturacionVal | null;
-      const s = localStorage.getItem(`status_${p.id}`)      as StatusVal      | null;
-      const pg = localStorage.getItem(`pagado_${p.id}`);
-      if (f)  fMap[p.id] = f;
-      if (s)  sMap[p.id] = s;
-      if (pg) pMap[p.id] = parseFloat(pg);
+      const stored = localStorage.getItem(`facturacion_${p.id}`) as FacturacionVal | null;
+      if (stored) map[p.id] = stored;
     }
-    setFactMap(fMap);
-    setStatusMap(sMap);
-    setPagadoMap(pMap);
+    setFactMap(map);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleFacturacion(id: string, value: FacturacionVal) {
     setFactMap((m) => ({ ...m, [id]: value }));
     if (typeof window !== "undefined") localStorage.setItem(`facturacion_${id}`, value);
-    patch(id, { "Facturación": value });
+    patch(id, { Facturación: value });
   }
 
-  function handleStatus(id: string, value: StatusVal) {
-    setStatusMap((m) => ({ ...m, [id]: value }));
-    if (typeof window !== "undefined") localStorage.setItem(`status_${id}`, value);
-    patch(id, { Status: value });
+  function handleEstado(id: string, value: string) {
+    setEstadoMap((m) => ({ ...m, [id]: value }));
+    patch(id, { ESTADO: value });
   }
 
-  function handlePagado(id: string, value: number) {
-    setPagadoMap((m) => ({ ...m, [id]: value }));
-    if (typeof window !== "undefined") localStorage.setItem(`pagado_${id}`, String(value));
-    patch(id, { Pagado: value });
-  }
+  const totalMonto     = facturables.reduce((s, p) => s + p.totalAcordado, 0);
+  const porFacturar    = facturables.filter((p) => (factMap[p.id] || "") === "Por facturar").reduce((s, p) => s + p.totalAcordado, 0);
+  const totalFacturado = facturables.filter((p) => (factMap[p.id] || "") === "Facturado").reduce((s, p) => s + p.totalAcordado, 0);
+  const budgetTotal    = items.reduce((s, i) => s + i.qty * i.dias * i.tarifa, 0);
 
-  const displayed = facturables.filter((p) =>
-    filterStatus === "Todos" || (statusMap[p.id] || "") === filterStatus
-  );
-
-  const budgetTotal = items.reduce((s, i) => s + i.qty * i.dias * i.tarifa, 0);
-
-  // Totals per status for KPI buttons
-  function sumByStatus(s: StatusVal | "") {
-    return facturables.filter((p) => (statusMap[p.id] || "") === s).reduce((acc, p) => acc + p.totalAcordado, 0);
-  }
+  const allEstados = [...new Set(proyectos.map((p) => p.estado))].sort();
 
   return (
     <div className="space-y-5">
-
-      {/* ── Status filter buttons (act as KPIs + filters) ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {/* Todos */}
-        <button onClick={() => setFilterStatus("Todos")}
-          className={`rounded-xl p-4 border text-left transition-all ${
-            filterStatus === "Todos" ? "bg-[#F5C200] border-[#F5C200]" : "bg-[#1a1a1a] border-[#2a2a2a] hover:border-[#F5C200]"
-          }`}>
-          <p className={`text-xs uppercase tracking-widest mb-1 ${filterStatus === "Todos" ? "text-[#0a0a0a80]" : "text-[#6b6b6b]"}`}>Todos</p>
-          <p className={`text-xl font-bold ${filterStatus === "Todos" ? "text-[#0a0a0a]" : "text-[#FAFAFA]"}`}>{facturables.length}</p>
-          <p className={`text-xs mt-0.5 ${filterStatus === "Todos" ? "text-[#0a0a0a70]" : "text-[#6b6b6b]"}`}>{fmt(facturables.reduce((s, p) => s + p.totalAcordado, 0))}</p>
-        </button>
-        {STATUS_OPTIONS.map((s) => {
-          const count  = facturables.filter((p) => (statusMap[p.id] || "") === s).length;
-          const active = filterStatus === s;
-          const colors: Record<string, { border: string; bg: string; text: string; subtext: string }> = {
-            Pagada:   { border: "#22c55e", bg: "#22c55e15", text: "#22c55e", subtext: "#22c55e90" },
-            Parcial:  { border: "#F5C200", bg: "#F5C20015", text: "#F5C200", subtext: "#F5C20090" },
-            Pendiente:{ border: "#ffffff40", bg: "#ffffff08", text: "#FAFAFA", subtext: "#9b9b9b" },
-            Mora:     { border: "#ff4444", bg: "#ff444415", text: "#ff4444", subtext: "#ff444490" },
-          };
-          const c = colors[s];
-          return (
-            <button key={s} onClick={() => setFilterStatus(active ? "Todos" : s)}
-              className="rounded-xl p-4 border text-left transition-all"
-              style={active
-                ? { background: c.bg, borderColor: c.border }
-                : { background: "#1a1a1a", borderColor: "#2a2a2a" }
-              }>
-              <p className="text-xs uppercase tracking-widest mb-1" style={{ color: active ? c.text : "#6b6b6b" }}>{s}</p>
-              <p className="text-xl font-bold" style={{ color: active ? c.text : "#FAFAFA" }}>{count}</p>
-              <p className="text-xs mt-0.5" style={{ color: active ? c.subtext : "#6b6b6b" }}>{fmt(sumByStatus(s))}</p>
-            </button>
-          );
-        })}
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { l: "Total aprobado",  v: fmt(totalMonto),        accent: false },
+          { l: "Por facturar",    v: fmt(porFacturar),       accent: true  },
+          { l: "Facturado",       v: fmt(totalFacturado),    accent: false },
+          { l: "Proyectos",       v: `${facturables.length}`,accent: false },
+        ].map((k) => (
+          <div key={k.l} className={`rounded-xl p-5 border ${k.accent ? "bg-[#F5C200] border-[#F5C200]" : "bg-[#1a1a1a] border-[#2a2a2a]"}`}>
+            <p className={`text-xs uppercase tracking-widest mb-2 ${k.accent ? "text-[#0a0a0a80]" : "text-[#6b6b6b]"}`}>{k.l}</p>
+            <p className={`text-xl font-bold ${k.accent ? "text-[#0a0a0a]" : "text-[#FAFAFA]"}`}>{k.v}</p>
+          </div>
+        ))}
       </div>
 
       {/* Tabs */}
@@ -188,81 +127,55 @@ export default function FinanceView({ proyectos }: { proyectos: Proyecto[] }) {
             <table className="w-full text-sm">
               <thead className="border-b border-[#2a2a2a]">
                 <tr>
-                  {["#", "Cliente", "Proyecto", "Monto", "Status", "Estado", "Facturación", "Fecha entrega"].map((h) => (
+                  {["#", "Cliente", "Proyecto", "Monto", "Estado", "Facturación", "Fecha entrega"].map((h) => (
                     <th key={h} className="text-left py-3 px-4 text-xs text-[#6b6b6b] font-medium tracking-wide uppercase whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {displayed.length === 0 && (
-                  <tr><td colSpan={8} className="py-8 text-center text-[#6b6b6b] text-sm">Sin proyectos.</td></tr>
+                {facturables.length === 0 && (
+                  <tr><td colSpan={7} className="py-8 text-center text-[#6b6b6b] text-sm">Sin proyectos aprobados o por cobrar.</td></tr>
                 )}
-                {displayed.map((p, i) => {
-                  const fact     = factMap[p.id]  || "";
-                  const status   = statusMap[p.id] || "";
-                  const pagado   = pagadoMap[p.id] ?? 0;
-                  const pendiente = Math.max(0, p.totalAcordado - pagado);
+                {facturables.map((p, i) => {
+                  const fact   = factMap[p.id] || "";
+                  const estado = estadoMap[p.id] || p.estado;
                   return (
-                    <tr key={p.id} className={`border-b border-[#1f1f1f] hover:bg-[#2a2a2a20] transition-colors ${status === "Mora" ? "bg-[#ff444406]" : ""}`}>
+                    <tr key={p.id} className="border-b border-[#1f1f1f] hover:bg-[#2a2a2a20] transition-colors">
                       <td className="py-3 px-4 text-[#6b6b6b] font-mono text-xs">{String(i + 1).padStart(2, "0")}</td>
                       <td className="py-3 px-4 text-[#FAFAFA] font-medium max-w-[140px]">
                         <p className="truncate">{p.cliente}</p>
                         <p className="text-xs text-[#6b6b6b] truncate">{p.representante}</p>
                       </td>
-                      <td className="py-3 px-4 text-[#9b9b9b] max-w-[160px]">
+                      <td className="py-3 px-4 text-[#9b9b9b] max-w-[180px]">
                         <p className="truncate">{p.proyecto || p.nombre}</p>
                       </td>
-                      {/* Total */}
-                      <td className="py-3 px-4 text-[#FAFAFA] font-semibold whitespace-nowrap">
+                      <td className="py-3 px-4 text-[#F5C200] font-semibold whitespace-nowrap">
                         {p.totalAcordado > 0 ? fmt(p.totalAcordado) : "—"}
                       </td>
-                      {/* Pagado — editable */}
                       <td className="py-3 px-4">
-                        <input
-                          type="number" min="0" value={pagado === 0 ? "" : pagado}
-                          placeholder="0"
-                          onChange={(e) => handlePagado(p.id, parseFloat(e.target.value) || 0)}
+                        <select
+                          value={estado}
+                          onChange={(e) => handleEstado(p.id, e.target.value)}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-28 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg px-2 py-1 text-xs text-[#22c55e] text-right focus:outline-none focus:border-[#F5C200]"
-                        />
+                          className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg px-2 py-1 text-xs text-[#FAFAFA] focus:outline-none focus:border-[#F5C200] cursor-pointer min-w-[120px]">
+                          {allEstados.map((e) => <option key={e} value={e}>{e}</option>)}
+                        </select>
                       </td>
-                      {/* Pendiente — calculado */}
-                      <td className={`py-3 px-4 font-semibold whitespace-nowrap text-sm ${pendiente > 0 ? "text-[#F5C200]" : "text-[#6b6b6b]"}`}>
-                        {fmt(pendiente)}
-                      </td>
-                      {/* Status — colored badge overlay */}
                       <td className="py-3 px-4">
-                        <div className="relative inline-block">
-                          <span className={`text-xs px-2.5 py-1 rounded-full border font-medium pointer-events-none ${STATUS_STYLE[status]}`}>
-                            {status || "— Status —"}
-                          </span>
-                          <select
-                            value={status}
-                            onChange={(e) => handleStatus(p.id, e.target.value as StatusVal)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute inset-0 opacity-0 w-full cursor-pointer">
-                            <option value="">— Status —</option>
-                            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        </div>
-                      </td>
-                      {/* Facturación — changeable */}
-                      <td className="py-3 px-4">
-                        <div className="relative inline-block">
-                          <span className={`text-xs px-2.5 py-1 rounded-full border font-medium pointer-events-none ${FACT_STYLE[fact]}`}>
-                            {fact || "— Facturación —"}
-                          </span>
-                          <select
-                            value={fact}
-                            onChange={(e) => handleFacturacion(p.id, e.target.value as FacturacionVal)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute inset-0 opacity-0 w-full cursor-pointer">
-                            <option value="">— Facturación —</option>
-                            <option value="Por facturar">Por facturar</option>
-                            <option value="Facturado">Facturado</option>
-                            <option value="N/A">N/A</option>
-                          </select>
-                        </div>
+                        <select
+                          value={fact}
+                          onChange={(e) => handleFacturacion(p.id, e.target.value as FacturacionVal)}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#F5C200] cursor-pointer min-w-[120px] ${
+                            fact === "Facturado"    ? "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]"
+                            : fact === "Por facturar" ? "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]"
+                            : "bg-[#0a0a0a] text-[#9b9b9b] border-[#2a2a2a]"
+                          }`}>
+                          <option value="">— Facturación —</option>
+                          <option value="Por facturar">Por facturar</option>
+                          <option value="Facturado">Facturado</option>
+                          <option value="N/A">N/A</option>
+                        </select>
                       </td>
                       <td className="py-3 px-4 text-[#6b6b6b] text-xs whitespace-nowrap">
                         {p.fechaEntrega || "—"}
