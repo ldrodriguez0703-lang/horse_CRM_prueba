@@ -10,6 +10,8 @@ function estadoStyle(raw: string): string {
   const v = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (v.includes("aprobado") || v.includes("confirm"))
     return "bg-[#22c55e20] text-[#22c55e] border-[#22c55e40]";
+  if (v.includes("cobrar") || v.includes("cobro"))
+    return "bg-[#f9731620] text-[#f97316] border-[#f9731640]";
   if (v.includes("seguimiento"))
     return "bg-[#F5C20020] text-[#F5C200] border-[#F5C20040]";
   if (v.includes("cotizar") || v.includes("en curso") || v.includes("proceso") || v.includes("activo"))
@@ -26,13 +28,14 @@ function estadoStyle(raw: string): string {
 function estadoPriority(raw: string): number {
   const v = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (v.includes("aprobado") || v.includes("confirm"))  return 1;
-  if (v.includes("seguimiento"))                        return 2;
-  if (v.includes("cotizar") || v.includes("proceso") || v.includes("activo")) return 3;
-  if (v.includes("editar") || v.includes("revis"))      return 4;
-  if (v.includes("aun") || v.includes("pendiente") || v.includes("prospecto")) return 5;
-  if (v.includes("cancel") || v.includes("muerto"))     return 6;
-  if (v.includes("finaliz") || v.includes("entregado")) return 7;
-  return 8;
+  if (v.includes("cobrar") || v.includes("cobro"))      return 2;
+  if (v.includes("seguimiento"))                        return 3;
+  if (v.includes("cotizar") || v.includes("proceso") || v.includes("activo")) return 4;
+  if (v.includes("editar") || v.includes("revis"))      return 5;
+  if (v.includes("aun") || v.includes("pendiente") || v.includes("prospecto")) return 6;
+  if (v.includes("cancel") || v.includes("muerto"))     return 7;
+  if (v.includes("finaliz") || v.includes("entregado")) return 8;
+  return 9;
 }
 
 function etapaLabel(pct: number): string {

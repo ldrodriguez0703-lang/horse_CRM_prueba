@@ -5,6 +5,17 @@ import { type Proyecto, fmt, PIPELINE_STAGES, PHASES, getPhase } from "@/lib/air
 
 const ENCARGADOS = ["Jesús", "Diego", "Alejandro", "Luis Diego"];
 
+const ENC_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  "Jesús":      { bg: "#F5C20020", text: "#F5C200", border: "#F5C20040" },
+  "Diego":      { bg: "#4a9eff20", text: "#4a9eff", border: "#4a9eff40" },
+  "Alejandro":  { bg: "#22c55e20", text: "#22c55e", border: "#22c55e40" },
+  "Luis Diego": { bg: "#f9731620", text: "#f97316", border: "#f9731640" },
+};
+
+function encStyle(name: string) {
+  return ENC_COLORS[name] ?? { bg: "#ffffff10", text: "#9b9b9b", border: "#ffffff20" };
+}
+
 async function patchPipeline(recordId: string, fields: Record<string, unknown>) {
   await fetch("/api/pipeline", {
     method: "POST",
@@ -59,14 +70,15 @@ function etapaFromPct(pct: number) {
 }
 
 export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
-  const [selected,      setSelected]      = useState<Proyecto | null>(null);
-  const [tareas,        setTareas]        = useState("");
-  const [encargado,     setEncargado]     = useState("");
-  const [etapaKey,      setEtapaKey]      = useState<string>("");
-  const [filterFase,    setFilterFase]    = useState("Todas");
-  const [search,        setSearch]        = useState("");
-  const [pctOverrides,  setPctOverrides]  = useState<Record<string, number>>({});
-  const [encargadoMap,  setEncargadoMap]  = useState<Record<string, string>>({});
+  const [selected,         setSelected]         = useState<Proyecto | null>(null);
+  const [tareas,           setTareas]           = useState("");
+  const [encargado,        setEncargado]        = useState("");
+  const [etapaKey,         setEtapaKey]         = useState<string>("");
+  const [filterFase,       setFilterFase]       = useState("Todas");
+  const [filterEncargado,  setFilterEncargado]  = useState("Todos");
+  const [search,           setSearch]           = useState("");
+  const [pctOverrides,     setPctOverrides]     = useState<Record<string, number>>({});
+  const [encargadoMap,     setEncargadoMap]     = useState<Record<string, string>>({});
 
   function effectivePct(p: Proyecto) {
     return pctOverrides[p.id] ?? p.porcentaje;
@@ -75,10 +87,12 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
   const activos = proyectos.filter((p) => p.estadoNorm !== "cancelado");
 
   const filtered = activos.filter((p) => {
-    const pct  = effectivePct(p);
-    const fase = getPhase(pct).label;
+    const pct     = effectivePct(p);
+    const fase    = getPhase(pct).label;
+    const cardEnc = encargadoMap[p.id] || p.encargado || "";
     return (
       (filterFase === "Todas" || fase === filterFase) &&
+      (filterEncargado === "Todos" || cardEnc === filterEncargado) &&
       (p.cliente.toLowerCase().includes(search.toLowerCase()) ||
        p.proyecto.toLowerCase().includes(search.toLowerCase()) ||
        p.representante.toLowerCase().includes(search.toLowerCase()))
@@ -155,6 +169,32 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
           ))}
         </div>
 
+        {/* Filtros por encargado */}
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => setFilterEncargado("Todos")}
+            className={`px-3 py-1.5 rounded-full border text-xs font-medium transition-all ${
+              filterEncargado === "Todos"
+                ? "bg-[#FAFAFA] text-[#0a0a0a] border-[#FAFAFA]"
+                : "bg-[#1a1a1a] text-[#6b6b6b] border-[#2a2a2a] hover:border-[#FAFAFA]"
+            }`}>
+            Todos
+          </button>
+          {ENCARGADOS.map((e) => {
+            const s      = encStyle(e);
+            const active = filterEncargado === e;
+            return (
+              <button key={e} onClick={() => setFilterEncargado(active ? "Todos" : e)}
+                className="px-3 py-1.5 rounded-full border text-xs font-medium transition-all"
+                style={active
+                  ? { background: s.text, borderColor: s.text, color: "#0a0a0a" }
+                  : { background: s.bg,   borderColor: s.border, color: s.text }
+                }>
+                {e}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Búsqueda */}
         <input type="text" placeholder="Buscar cliente, proyecto o representante..."
           value={search} onChange={(e) => setSearch(e.target.value)}
@@ -164,30 +204,26 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
         {/* Cards */}
         <div className="space-y-3 overflow-y-auto">
           {filtered.map((p) => {
-            const pct        = effectivePct(p);
-            const fase       = getPhase(pct);
-            const etapa      = etapaFromPct(pct);
-            const cardEnc    = encargadoMap[p.id] || p.encargado;
+            const pct     = effectivePct(p);
+            const fase    = getPhase(pct);
+            const etapa   = etapaFromPct(pct);
+            const cardEnc = encargadoMap[p.id] || p.encargado;
+            const enc     = cardEnc ? encStyle(cardEnc) : null;
+            const parts   = [p.proyecto, p.cliente, p.totalAcordado > 0 ? fmt(p.totalAcordado) : null].filter(Boolean);
             return (
               <div key={p.id} onClick={() => openDetail(p)}
                 className={`bg-[#1a1a1a] border rounded-xl p-4 cursor-pointer transition-all hover:border-[#F5C200] ${
                   selected?.id === p.id ? "border-[#F5C200]" : "border-[#2a2a2a]"
                 }`}>
-                {/* Top row: proyecto left | CLIENTE yellow bold right */}
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[#9b9b9b] text-xs truncate">{p.proyecto}</p>
-                    <p className="text-[#6b6b6b] text-xs mt-0.5">
-                      {p.representante}
-                      {p.fechaEntrega && <> · <span className="text-[#F5C200]">{p.fechaEntrega}</span></>}
-                    </p>
-                  </div>
-                  <p className="text-[#F5C200] font-bold text-sm text-right flex-shrink-0 max-w-[45%] truncate">{p.cliente}</p>
-                </div>
-
-                {/* Price prominent */}
-                {p.totalAcordado > 0 && (
-                  <p className="text-[#F5C200] font-bold text-xl mb-2">{fmt(p.totalAcordado)}</p>
+                {/* H1 line: Proyecto — Cliente — Precio */}
+                <p className="text-[#FAFAFA] font-bold text-base leading-tight mb-1 truncate">
+                  {parts.join(" — ")}
+                </p>
+                {/* Representante · Fecha */}
+                {(p.representante || p.fechaEntrega) && (
+                  <p className="text-[#6b6b6b] text-xs mb-2">
+                    {p.representante}{p.fechaEntrega && <> · <span className="text-[#F5C200]">{p.fechaEntrega}</span></>}
+                  </p>
                 )}
 
                 {/* Badges + encargado + % */}
@@ -199,8 +235,9 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${ESTADO_STYLE[p.estadoNorm]}`}>
                     {p.estado}
                   </span>
-                  {cardEnc && (
-                    <span className="text-xs text-[#6b6b6b] bg-[#2a2a2a] px-2 py-0.5 rounded-full">
+                  {enc && cardEnc && (
+                    <span className="text-xs px-2 py-0.5 rounded-full border font-medium"
+                      style={{ background: enc.bg, color: enc.text, borderColor: enc.border }}>
                       {cardEnc}
                     </span>
                   )}
@@ -220,9 +257,9 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
         <div className="w-96 flex-shrink-0 bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl flex flex-col overflow-hidden max-h-[calc(100vh-8rem)] shadow-2xl">
           <div className="p-5 border-b border-[#1a1a1a]">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-[#FAFAFA] font-bold">{selected.cliente}</p>
-                {selected.proyecto && <p className="text-[#6b6b6b] text-xs mt-0.5">{selected.proyecto}</p>}
+              <div className="flex-1 min-w-0">
+                <p className="text-[#FAFAFA] font-bold truncate">{selected.cliente}</p>
+                {selected.proyecto && <p className="text-[#6b6b6b] text-xs mt-0.5 truncate">{selected.proyecto}</p>}
                 <p className="text-[#6b6b6b] text-xs">{selected.representante} · {selected.fechaEntrega || "Sin fecha"}</p>
               </div>
               <button onClick={() => setSelected(null)} className="text-[#6b6b6b] hover:text-[#FAFAFA] text-xl flex-shrink-0">×</button>
@@ -237,19 +274,24 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
             {/* ── Encargado ── */}
             <div>
               <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase mb-2">Encargado</p>
-              <select
-                value={encargado}
-                onChange={(e) => handleEncargadoChange(e.target.value)}
-                className={`w-full bg-[#1a1a1a] border rounded-lg px-3 py-2 text-sm text-[#FAFAFA] focus:outline-none transition-colors ${
-                  etapaKey && !encargado
-                    ? "border-[#F5C200] animate-pulse"
-                    : "border-[#2a2a2a] focus:border-[#F5C200]"
-                }`}>
-                <option value="">— Seleccionar encargado —</option>
-                {ENCARGADOS.map((e) => <option key={e} value={e}>{e}</option>)}
-              </select>
+              <div className="flex gap-2 flex-wrap mb-1">
+                {ENCARGADOS.map((e) => {
+                  const s      = encStyle(e);
+                  const active = encargado === e;
+                  return (
+                    <button key={e} onClick={() => handleEncargadoChange(active ? "" : e)}
+                      className="px-3 py-1.5 rounded-full border text-xs font-medium transition-all"
+                      style={active
+                        ? { background: s.text, borderColor: s.text, color: "#0a0a0a" }
+                        : { background: s.bg,   borderColor: s.border, color: s.text }
+                      }>
+                      {e}
+                    </button>
+                  );
+                })}
+              </div>
               {etapaKey && !encargado && (
-                <p className="text-xs text-[#F5C200] mt-1">Debes asignar un encargado para esta etapa</p>
+                <p className="text-xs text-[#F5C200]">Asigna un encargado para esta etapa</p>
               )}
             </div>
 
@@ -310,7 +352,6 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
               </div>
             )}
 
-            {/* Links */}
             {(selected.proforma || selected.presentacion) && (
               <div>
                 <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase mb-2">Documentos</p>
@@ -321,7 +362,6 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
               </div>
             )}
 
-            {/* Material */}
             {selected.material.length > 0 && (
               <div>
                 <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase mb-2">Material ({selected.material.length})</p>
