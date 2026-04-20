@@ -36,7 +36,7 @@ const ESTADO_STYLE: Record<string, string> = {
 function PhaseBar({ porcentaje }: { porcentaje: number }) {
   return (
     <div className="w-full">
-      <div className="grid grid-cols-4 mb-1">
+      <div className="mb-1" style={{ display: "grid", gridTemplateColumns: `repeat(${PHASES.length}, 1fr)` }}>
         {PHASES.map((p) => {
           const active  = porcentaje >= p.min;
           const current = porcentaje >= p.min && porcentaje <= p.max;
@@ -51,7 +51,8 @@ function PhaseBar({ porcentaje }: { porcentaje: number }) {
         {PHASES.map((p) => {
           const filled  = porcentaje > p.max;
           const current = porcentaje >= p.min && porcentaje <= p.max;
-          const w = current ? Math.round(((porcentaje - p.min) / (p.max - p.min)) * 100) : 0;
+          const range = p.max - p.min;
+          const w = current ? (range === 0 ? 100 : Math.round(((porcentaje - p.min) / range) * 100)) : 0;
           return (
             <div key={p.label} className="flex-1 bg-[#2a2a2a] rounded-sm overflow-hidden relative">
               {filled  && <div className="absolute inset-0" style={{ background: p.color, opacity: 0.7 }} />}
@@ -153,7 +154,7 @@ export default function PipelineView({ proyectos }: { proyectos: Proyecto[] }) {
       <div className="flex-1 min-w-0 flex flex-col gap-4">
 
         {/* Contadores por fase */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${byPhase.length}, 1fr)` }}>
           {byPhase.map((ph) => (
             <button key={ph.label}
               onClick={() => setFilterFase(filterFase === ph.label ? "Todas" : ph.label)}

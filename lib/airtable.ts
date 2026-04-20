@@ -44,7 +44,8 @@ export const PIPELINE_STAGES = [
   { fase: "Post / Entrega", etapa: "Colorización",      pct: 87  },
   { fase: "Post / Entrega", etapa: "Sonido",            pct: 91  },
   { fase: "Post / Entrega", etapa: "VFX",               pct: 95  },
-  { fase: "Post / Entrega", etapa: "Entrega final",     pct: 100 },
+  { fase: "Post / Entrega", etapa: "Entrega final",     pct: 97  },
+  { fase: "Cerrado",        etapa: "Cerrado",           pct: 100 },
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -54,7 +55,8 @@ export const PHASES = [
   { label: "Creatividad",    min: 0,  max: 24,  color: "#F5C200" },
   { label: "Pre-Producción", min: 25, max: 49,  color: "#4a9eff" },
   { label: "Producción",     min: 50, max: 74,  color: "#f97316" },
-  { label: "Post / Entrega", min: 75, max: 100, color: "#a855f7" },
+  { label: "Post / Entrega", min: 75, max: 99,  color: "#a855f7" },
+  { label: "Cerrado",        min: 100,max: 100, color: "#22c55e" },
 ] as const;
 
 export function getPhase(pct: number) {
