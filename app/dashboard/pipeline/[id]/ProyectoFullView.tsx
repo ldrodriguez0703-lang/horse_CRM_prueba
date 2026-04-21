@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { type Proyecto, fmt, PIPELINE_STAGES, PHASES, getPhase } from "@/lib/airtable";
 
@@ -59,10 +59,7 @@ type PlanoTecnico = {
   locacion: string; valorPlano: string; descripcion: string;
   personajes: string; movimiento: string; props: string;
 };
-type TareaTimeline = {
-  id: string; wbs: string; tarea: string; responsable: string;
-  inicia: string; termina: string; porcentaje: number; fase: string;
-};
+type TaskTiming = { inicia: string; dias: number; porcentaje: number };
 
 // ── Templates ────────────────────────────────────────────────────────────────
 const TRACKER_TEMPLATE: Pick<TareaRodaje, "necesidad" | "departamento" | "responsable">[] = [
@@ -105,31 +102,30 @@ const TRACKER_TEMPLATE: Pick<TareaRodaje, "necesidad" | "departamento" | "respon
   { necesidad: "Documento de pagos",       departamento: "Financiero", responsable: "Luis Diego" },
 ];
 
-const TIMELINE_TEMPLATE: Omit<TareaTimeline, "id">[] = [
-  { wbs: "1.1",  tarea: "Contratos",              responsable: "Luis Diego", inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.2",  tarea: "Firma de Contrato",       responsable: "Luis Diego", inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.3",  tarea: "Time Table",              responsable: "Alejandro",  inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.4",  tarea: "Guión",                  responsable: "Diego",      inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.5",  tarea: "Aprobación de Guión",    responsable: "CLIENTE",    inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.6",  tarea: "StoryBoard",              responsable: "Alejandro",  inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.7",  tarea: "Aprobación StoryBoard",   responsable: "CLIENTE",    inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.8",  tarea: "Locaciones",              responsable: "Jesús",      inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.9",  tarea: "Aprobación Locaciones",   responsable: "CLIENTE",    inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.10", tarea: "Casting",                 responsable: "Diego",      inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.11", tarea: "Aprobación Casting",      responsable: "CLIENTE",    inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.12", tarea: "Dirección de Arte",       responsable: "Alejandro",  inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.13", tarea: "Plan de Rodaje",          responsable: "Luis Diego", inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.14", tarea: "Llamados",                responsable: "Luis Diego", inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "1.15", tarea: "Alimentación",            responsable: "Alejandro",  inicia: "", termina: "", porcentaje: 0, fase: "Pre-Producción" },
-  { wbs: "2.1",  tarea: "Producción Jingle",       responsable: "Todos",      inicia: "", termina: "", porcentaje: 0, fase: "Producción"     },
-  { wbs: "2.2",  tarea: "Rodaje Día 1",            responsable: "Todos",      inicia: "", termina: "", porcentaje: 0, fase: "Producción"     },
-  { wbs: "2.3",  tarea: "Rodaje Día 2",            responsable: "Todos",      inicia: "", termina: "", porcentaje: 0, fase: "Producción"     },
-  { wbs: "3.1",  tarea: "Edición",                 responsable: "Luis Diego", inicia: "", termina: "", porcentaje: 0, fase: "Post-Producción"},
-  { wbs: "3.2",  tarea: "Animación 2D",            responsable: "Alejandro",  inicia: "", termina: "", porcentaje: 0, fase: "Post-Producción"},
-  { wbs: "4.1",  tarea: "Primera Entrega",         responsable: "Diego",      inicia: "", termina: "", porcentaje: 0, fase: "Entregas"       },
-  { wbs: "4.2",  tarea: "Revisión Cliente",        responsable: "CLIENTE",    inicia: "", termina: "", porcentaje: 0, fase: "Entregas"       },
-  { wbs: "4.3",  tarea: "Entrega Final",           responsable: "Diego",      inicia: "", termina: "", porcentaje: 0, fase: "Entregas"       },
-];
+const DEPTO_FASE: Record<string, string> = {
+  "Logística": "Pre-Producción", "Casting": "Pre-Producción",
+  "Jingle": "Pre-Producción",    "Arte": "Pre-Producción",
+  "Crew": "Producción",          "Equipo": "Producción",
+  "Locación": "Pre-Producción",  "Financiero": "Entregas",
+};
+const FASE_ORDER = ["Pre-Producción", "Producción", "Post-Producción", "Entregas"];
+
+function getMonday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay();
+  date.setDate(date.getDate() + (day === 0 ? -6 : 1 - day));
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+function addDays(d: Date, n: number): Date {
+  const r = new Date(d); r.setDate(r.getDate() + n); return r;
+}
+function isTaskActiveFn(timing: { inicia: string; dias: number } | undefined, day: Date): boolean {
+  if (!timing?.inicia) return false;
+  const start = new Date(timing.inicia + "T00:00:00");
+  const end = addDays(start, Math.max(timing.dias, 1));
+  return day >= start && day < end;
+}
 
 const FASE_COLORS: Record<string, string> = {
   "Pre-Producción": "#4a9eff", "Producción": "#f97316",
@@ -141,9 +137,6 @@ function makeTracker(): TareaRodaje[] {
     id: `tpl_${i}`, necesidad: t.necesidad, departamento: t.departamento,
     resuelto: false, responsable: t.responsable, observaciones: "",
   }));
-}
-function makeTimeline(): TareaTimeline[] {
-  return TIMELINE_TEMPLATE.map((t, i) => ({ ...t, id: `tt_${i}` }));
 }
 
 // ── PhaseBar ─────────────────────────────────────────────────────────────────
@@ -196,8 +189,10 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
   const [guion,   setGuion]   = useState<EscenaGuion[]>([]);
   // Guión Técnico
   const [planos,  setPlanos]  = useState<PlanoTecnico[]>([]);
-  // Time Table
-  const [timeline, setTimeline] = useState<TareaTimeline[]>([]);
+  // Time Table (keyed by tracker task ID)
+  const [timeline, setTimeline] = useState<Record<string, TaskTiming>>({});
+  // Guión file (session only — blob URL)
+  const [guionFile, setGuionFile] = useState<{ name: string; url: string; type: string } | null>(null);
   // Gastos
   const [gastos,       setGastos]       = useState<Gasto[]>([]);
   const [showGastoForm, setShowGastoForm] = useState(false);
@@ -218,7 +213,8 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
     const savedPlanos = localStorage.getItem(`planos_${id}`);
     setPlanos(savedPlanos ? JSON.parse(savedPlanos) : []);
     const savedTimeline = localStorage.getItem(`timeline_${id}`);
-    setTimeline(savedTimeline ? JSON.parse(savedTimeline) : makeTimeline());
+    const parsedTL = savedTimeline ? JSON.parse(savedTimeline) : {};
+    setTimeline(Array.isArray(parsedTL) ? {} : parsedTL);
     const savedGastos = localStorage.getItem(`gastos_${id}`);
     setGastos(savedGastos ? JSON.parse(savedGastos) : []);
   }, [proyecto.id, proyecto.porcentaje, proyecto.encargado]);
@@ -260,6 +256,15 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
   }
   function deleteTarea(tid: string) { saveTracker(tracker.filter((t) => t.id !== tid)); }
 
+  // Guión file upload
+  function handleGuionFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (guionFile?.url) URL.revokeObjectURL(guionFile.url);
+    setGuionFile({ name: file.name, url: URL.createObjectURL(file), type: file.type });
+    e.target.value = "";
+  }
+
   // Guión
   function saveGuion(updated: EscenaGuion[]) { setGuion(updated); localStorage.setItem(`guion_${id}`, JSON.stringify(updated)); }
   function addEscena() {
@@ -283,15 +288,11 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
   function deletePlano(pid: string) { savePlanos(planos.filter((p) => p.id !== pid)); }
 
   // Timeline
-  function saveTimeline(updated: TareaTimeline[]) { setTimeline(updated); localStorage.setItem(`timeline_${id}`, JSON.stringify(updated)); }
-  function updateTT(tid: string, field: keyof TareaTimeline, value: string | number) {
-    saveTimeline(timeline.map((t) => t.id === tid ? { ...t, [field]: value } : t));
+  function saveTimeline(updated: Record<string, TaskTiming>) { setTimeline(updated); localStorage.setItem(`timeline_${id}`, JSON.stringify(updated)); }
+  function updateTT(taskId: string, field: keyof TaskTiming, value: string | number) {
+    const current = timeline[taskId] ?? { inicia: "", dias: 1, porcentaje: 0 };
+    saveTimeline({ ...timeline, [taskId]: { ...current, [field]: value } });
   }
-  function addTT(fase: string) {
-    const t: TareaTimeline = { id: `tt${Date.now()}`, wbs: "", tarea: "Nueva tarea", responsable: "Diego", inicia: "", termina: "", porcentaje: 0, fase };
-    saveTimeline([...timeline, t]);
-  }
-  function deleteTT(tid: string) { saveTimeline(timeline.filter((t) => t.id !== tid)); }
 
   // Gastos
   function saveGastos(updated: Gasto[]) { setGastos(updated); localStorage.setItem(`gastos_${id}`, JSON.stringify(updated)); }
@@ -310,7 +311,17 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
   const trackerPct = tracker.length > 0 ? Math.round((totalResueltas / tracker.length) * 100) : 0;
   const totalPresupuesto = gastos.reduce((s, g) => s + (parseFloat(g.presupuesto) || 0), 0);
   const totalReal        = gastos.reduce((s, g) => s + (parseFloat(g.costoReal)   || 0), 0);
-  const timelineFases = [...new Set(TIMELINE_TEMPLATE.map((t) => t.fase))];
+
+  // Gantt
+  const trackerByPhase = tracker.reduce<Record<string, TareaRodaje[]>>((acc, t) => {
+    const fase = DEPTO_FASE[t.departamento] ?? "Pre-Producción";
+    (acc[fase] ??= []).push(t);
+    return acc;
+  }, {});
+  const allStartDates = Object.values(timeline).filter((t) => t.inicia).map((t) => new Date(t.inicia + "T00:00:00"));
+  const ganttBase  = allStartDates.length > 0 ? new Date(Math.min(...allStartDates.map((d) => d.getTime()))) : new Date();
+  const ganttStart = getMonday(ganttBase);
+  const ganttDays  = Array.from({ length: 56 }, (_, i) => addDays(ganttStart, i));
 
   const TABS: { key: Tab; label: string }[] = [
     { key: "general",      label: "General"        },
@@ -361,7 +372,7 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
       </div>
 
       {/* ── Tab content ── */}
-      <div className="flex-1 overflow-y-auto">
+      <div className={`flex-1 ${tab === "guion" && guionFile ? "overflow-hidden" : "overflow-y-auto"}`}>
 
         {/* ── GENERAL ── */}
         {tab === "general" && (
@@ -530,20 +541,26 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
           </div>
         )}
 
-        {/* ── GUIÓN ── */}
-        {tab === "guion" && (
+        {/* ── GUIÓN — sin archivo ── */}
+        {tab === "guion" && !guionFile && (
           <div className="p-6 max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-              <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase">Guión narrativo — {guion.length} escenas</p>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase">Guión — {guion.length} escenas</p>
               <button onClick={addEscena}
                 className="px-4 py-1.5 bg-[#F5C200] text-[#0a0a0a] text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity">
                 + Escena
               </button>
             </div>
 
+            <label className="flex flex-col items-center justify-center w-full border-2 border-dashed border-[#2a2a2a] rounded-xl py-8 cursor-pointer hover:border-[#F5C200] hover:bg-[#F5C20008] transition-all mb-6 group">
+              <span className="text-3xl mb-2">📄</span>
+              <span className="text-[#6b6b6b] text-sm font-medium group-hover:text-[#F5C200] transition-colors">Subir guión</span>
+              <span className="text-[#3a3a3a] text-xs mt-1">PDF, imagen, Word — se visualiza en pantalla</span>
+              <input type="file" className="hidden" onChange={handleGuionFileUpload} accept=".pdf,.doc,.docx,.txt,image/*" />
+            </label>
+
             {guion.length === 0 && (
-              <div className="text-center py-16 text-[#3a3a3a]">
-                <p className="text-4xl mb-3">🎬</p>
+              <div className="text-center py-8 text-[#3a3a3a]">
                 <p className="text-sm">Sin escenas. Agrega la primera.</p>
               </div>
             )}
@@ -587,6 +604,73 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── GUIÓN — con archivo (split view) ── */}
+        {tab === "guion" && guionFile && (
+          <div className="h-full flex">
+            {/* Visor de archivo */}
+            <div className="flex-1 flex flex-col min-w-0 border-r border-[#1a1a1a]">
+              <div className="flex items-center justify-between px-4 py-2 bg-[#111111] border-b border-[#2a2a2a] flex-shrink-0">
+                <p className="text-xs text-[#FAFAFA] font-medium truncate">{guionFile.name}</p>
+                <div className="flex items-center gap-4 flex-shrink-0 ml-4">
+                  <label className="text-xs text-[#F5C200] cursor-pointer hover:underline">
+                    Cambiar
+                    <input type="file" className="hidden" onChange={handleGuionFileUpload} accept=".pdf,.doc,.docx,.txt,image/*" />
+                  </label>
+                  <button
+                    onClick={() => { URL.revokeObjectURL(guionFile.url); setGuionFile(null); }}
+                    className="text-[#6b6b6b] hover:text-[#ff6b6b] text-xs transition-colors">
+                    × Quitar
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0">
+                {guionFile.type.startsWith("image/") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={guionFile.url} alt={guionFile.name} className="w-full h-full object-contain p-4" />
+                ) : (
+                  <iframe src={guionFile.url} className="w-full h-full border-0" title={guionFile.name} />
+                )}
+              </div>
+            </div>
+
+            {/* Panel de escenas */}
+            <div className="w-[360px] flex-shrink-0 flex flex-col overflow-hidden bg-[#0a0a0a]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a] flex-shrink-0">
+                <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase">{guion.length} escenas</p>
+                <button onClick={addEscena}
+                  className="px-3 py-1 bg-[#F5C200] text-[#0a0a0a] text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity">
+                  + Escena
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {guion.length === 0 && (
+                  <div className="text-center py-8 text-[#3a3a3a]">
+                    <p className="text-sm">Agrega la primera escena.</p>
+                  </div>
+                )}
+                {guion.map((e, i) => (
+                  <div key={e.id} className="bg-[#111111] border border-[#2a2a2a] rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <span className="text-[#F5C200] font-bold text-xs flex-shrink-0">#{i + 1}</span>
+                        <input value={e.titulo} onChange={(ev) => updateEscena(e.id, "titulo", ev.target.value)}
+                          className="flex-1 bg-transparent text-[#FAFAFA] font-semibold text-xs border-b border-transparent hover:border-[#3a3a3a] focus:border-[#F5C200] focus:outline-none transition-colors" />
+                      </div>
+                      <button onClick={() => deleteEscena(e.id)} className="text-[#3a3a3a] hover:text-[#ff6b6b] transition-colors flex-shrink-0">×</button>
+                    </div>
+                    <input value={e.personajes} onChange={(ev) => updateEscena(e.id, "personajes", ev.target.value)}
+                      placeholder="Personajes..."
+                      className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-[#FAFAFA] placeholder-[#3a3a3a] focus:outline-none focus:border-[#F5C200] mb-2" />
+                    <textarea value={e.dialogo} onChange={(ev) => updateEscena(e.id, "dialogo", ev.target.value)}
+                      placeholder="PERSONAJE: Texto del diálogo..." rows={3}
+                      className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-[#FAFAFA] placeholder-[#3a3a3a] focus:outline-none focus:border-[#F5C200] resize-none leading-relaxed font-mono" />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -652,68 +736,138 @@ export default function ProyectoFullView({ proyecto }: { proyecto: Proyecto }) {
         {/* ── TIME TABLE ── */}
         {tab === "timetable" && (
           <div className="p-6">
-            <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase mb-6">Cronograma del proyecto</p>
-            <div className="space-y-6">
-              {timelineFases.map((fase) => {
-                const items = timeline.filter((t) => t.fase === fase);
-                const color = FASE_COLORS[fase] ?? "#9b9b9b";
-                const fasePct = items.length > 0 ? Math.round(items.reduce((s, t) => s + t.porcentaje, 0) / items.length) : 0;
-                return (
-                  <div key={fase}>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs font-semibold uppercase tracking-widest" style={{ color }}>{fase}</p>
-                      <span className="text-xs" style={{ color }}>{fasePct}%</span>
-                    </div>
-                    <div className="bg-[#111111] border border-[#2a2a2a] rounded-xl overflow-hidden">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b border-[#2a2a2a]">
-                            {["WBS","Tarea","Responsable","Inicia","Termina","%",""].map((h) => (
-                              <th key={h} className="text-left text-[10px] text-[#6b6b6b] font-medium uppercase tracking-widest px-3 py-2">{h}</th>
-                            ))}
+            <div className="flex items-center gap-3 mb-4">
+              <p className="text-[#6b6b6b] text-xs font-medium tracking-widest uppercase flex-1">Cronograma del proyecto</p>
+              {allStartDates.length > 0 && (
+                <p className="text-[10px] text-[#3a3a3a]">
+                  Desde {ganttStart.toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })} · 8 semanas
+                </p>
+              )}
+            </div>
+
+            {tracker.length === 0 && (
+              <div className="text-center py-16 text-[#3a3a3a]">
+                <p className="text-sm">Agrega tareas en Producción para ver el cronograma.</p>
+              </div>
+            )}
+
+            {tracker.length > 0 && (
+              <div className="overflow-x-auto rounded-xl border border-[#2a2a2a]">
+                <table className="border-collapse bg-[#0a0a0a]" style={{ minWidth: `${470 + ganttDays.length * 18}px` }}>
+                  <thead>
+                    {/* Row 1: section label + week date spans */}
+                    <tr className="bg-[#111111]">
+                      <th colSpan={5} className="sticky left-0 z-20 bg-[#111111] border-b border-r border-[#2a2a2a] px-3 py-2 text-left text-[10px] text-[#6b6b6b] uppercase tracking-widest font-medium">
+                        Tarea
+                      </th>
+                      {Array.from({ length: 8 }, (_, wi) => (
+                        <th key={wi} colSpan={7}
+                          className={`border-b border-[#2a2a2a] ${wi < 7 ? "border-r" : ""} px-1 py-2 text-center text-[10px] text-[#6b6b6b] font-medium whitespace-nowrap`}>
+                          Sem {wi + 1} · {addDays(ganttStart, wi * 7).toLocaleDateString("es-CO", { day: "numeric", month: "short" })}
+                        </th>
+                      ))}
+                    </tr>
+                    {/* Row 2: column headers + day labels */}
+                    <tr className="bg-[#111111]">
+                      <th className="sticky left-0 z-20 bg-[#111111] border-b border-[#2a2a2a] px-2 py-1.5 text-left text-[10px] text-[#FAFAFA] font-medium" style={{ minWidth: 175 }}>Tarea</th>
+                      <th className="sticky left-[175px] z-20 bg-[#111111] border-b border-[#2a2a2a] px-2 py-1.5 text-left text-[10px] text-[#6b6b6b] font-medium" style={{ minWidth: 90 }}>Responsable</th>
+                      <th className="sticky left-[265px] z-20 bg-[#111111] border-b border-[#2a2a2a] px-2 py-1.5 text-left text-[10px] text-[#6b6b6b] font-medium" style={{ minWidth: 112 }}>Inicia</th>
+                      <th className="sticky left-[377px] z-20 bg-[#111111] border-b border-[#2a2a2a] px-2 py-1.5 text-center text-[10px] text-[#6b6b6b] font-medium" style={{ minWidth: 46 }}>Días</th>
+                      <th className="sticky left-[423px] z-20 bg-[#111111] border-b border-r border-[#2a2a2a] px-2 py-1.5 text-center text-[10px] text-[#6b6b6b] font-medium" style={{ minWidth: 46 }}>%</th>
+                      {ganttDays.map((day, di) => {
+                        const dow = day.getDay();
+                        const isWeekend = dow === 0 || dow === 6;
+                        const isToday = day.toDateString() === new Date().toDateString();
+                        const endOfWeek = dow === 0;
+                        return (
+                          <th key={di} style={{ width: 18, minWidth: 18, fontSize: 9, borderRight: endOfWeek ? "1px solid #2a2a2a" : undefined, borderBottom: "1px solid #2a2a2a", color: isToday ? "#F5C200" : isWeekend ? "#3a3a3a" : "#6b6b6b", backgroundColor: isToday ? "#F5C20015" : undefined, textAlign: "center", paddingBottom: 6, paddingTop: 6 }}>
+                            {["D","L","M","X","J","V","S"][dow]}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {FASE_ORDER.map((fase, faseIdx) => {
+                      const tasks = trackerByPhase[fase] ?? [];
+                      if (tasks.length === 0) return null;
+                      const faseColor = FASE_COLORS[fase] ?? "#9b9b9b";
+                      const timings = tasks.map((t) => timeline[t.id]).filter(Boolean) as TaskTiming[];
+                      const pctAvg = timings.length > 0 ? Math.round(timings.reduce((s, t) => s + t.porcentaje, 0) / timings.length) : 0;
+                      return (
+                        <Fragment key={fase}>
+                          {/* Phase header row */}
+                          <tr>
+                            <td colSpan={5 + ganttDays.length}
+                              className="sticky left-0 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest border-b border-[#2a2a2a] bg-[#0d0d0d]"
+                              style={{ color: faseColor }}>
+                              {faseIdx + 1} — {fase}
+                              {pctAvg > 0 && <span className="ml-2 font-normal opacity-60">{pctAvg}%</span>}
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {items.map((t) => {
-                            const enc = encStyle(t.responsable);
+                          {/* Task rows */}
+                          {tasks.map((task) => {
+                            const timing = timeline[task.id] ?? { inicia: "", dias: 1, porcentaje: 0 };
+                            const enc = encStyle(task.responsable);
                             return (
-                              <tr key={t.id} className="border-b border-[#1a1a1a] last:border-0 group">
-                                <td className={cellCls}><input value={t.wbs} onChange={(e) => updateTT(t.id, "wbs", e.target.value)} className={`${inputCls} w-12 text-[#6b6b6b] font-mono`} /></td>
-                                <td className={cellCls}><input value={t.tarea} onChange={(e) => updateTT(t.id, "tarea", e.target.value)} className={`${inputCls}`} /></td>
-                                <td className={`${cellCls} w-36`}>
-                                  <select value={t.responsable} onChange={(e) => updateTT(t.id, "responsable", e.target.value)}
+                              <tr key={task.id} className="border-b border-[#1a1a1a]">
+                                <td className="sticky left-0 z-10 bg-[#0a0a0a] px-2 py-1.5 text-xs text-[#FAFAFA] truncate" style={{ minWidth: 175, maxWidth: 175 }}>
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle flex-shrink-0" style={{ backgroundColor: task.resuelto ? faseColor : "#3a3a3a" }} />
+                                  {task.necesidad}
+                                </td>
+                                <td className="sticky left-[175px] z-10 bg-[#0a0a0a] px-2 py-1.5" style={{ minWidth: 90 }}>
+                                  <select value={task.responsable} onChange={(e) => updateTarea(task.id, "responsable", e.target.value)}
                                     className="bg-transparent text-[11px] font-medium border-b border-transparent hover:border-[#3a3a3a] focus:border-[#F5C200] focus:outline-none cursor-pointer w-full"
                                     style={{ color: enc.text }}>
                                     {ENCARGADOS.map((e) => <option key={e} value={e} style={{ background: "#1a1a1a", color: "#FAFAFA" }}>{e}</option>)}
                                   </select>
                                 </td>
-                                <td className={cellCls}><input type="date" value={t.inicia} onChange={(e) => updateTT(t.id, "inicia", e.target.value)} className={`${inputCls} w-32`} /></td>
-                                <td className={cellCls}><input type="date" value={t.termina} onChange={(e) => updateTT(t.id, "termina", e.target.value)} className={`${inputCls} w-32`} /></td>
-                                <td className={cellCls}>
-                                  <div className="flex items-center gap-2">
-                                    <input type="number" min={0} max={100} value={t.porcentaje}
-                                      onChange={(e) => updateTT(t.id, "porcentaje", parseInt(e.target.value) || 0)}
-                                      className={`${inputCls} w-12`} style={{ color }} />
-                                    <span className="text-[10px]" style={{ color }}>%</span>
-                                  </div>
+                                <td className="sticky left-[265px] z-10 bg-[#0a0a0a] px-2 py-1.5" style={{ minWidth: 112 }}>
+                                  <input type="date" value={timing.inicia}
+                                    onChange={(e) => updateTT(task.id, "inicia", e.target.value)}
+                                    className="bg-transparent text-[11px] text-[#FAFAFA] border-b border-transparent hover:border-[#3a3a3a] focus:border-[#F5C200] focus:outline-none w-full" />
                                 </td>
-                                <td className="pr-2">
-                                  <button onClick={() => deleteTT(t.id)} className="opacity-0 group-hover:opacity-100 text-[#6b6b6b] hover:text-[#ff6b6b] transition-all text-base">×</button>
+                                <td className="sticky left-[377px] z-10 bg-[#0a0a0a] px-2 py-1.5 text-center" style={{ minWidth: 46 }}>
+                                  <input type="number" min={1} value={timing.dias}
+                                    onChange={(e) => updateTT(task.id, "dias", parseInt(e.target.value) || 1)}
+                                    className={`${inputCls} text-center text-xs w-full`} />
                                 </td>
+                                <td className="sticky left-[423px] z-10 bg-[#0a0a0a] px-2 py-1.5 text-center border-r border-[#2a2a2a]" style={{ minWidth: 46 }}>
+                                  <input type="number" min={0} max={100} value={timing.porcentaje}
+                                    onChange={(e) => updateTT(task.id, "porcentaje", parseInt(e.target.value) || 0)}
+                                    className={`${inputCls} text-center text-xs w-full`}
+                                    style={{ color: faseColor }} />
+                                </td>
+                                {/* Gantt cells */}
+                                {ganttDays.map((day, di) => {
+                                  const active = isTaskActiveFn(timing, day);
+                                  const dow = day.getDay();
+                                  const isWeekend = dow === 0 || dow === 6;
+                                  const isToday = day.toDateString() === new Date().toDateString();
+                                  const endOfWeek = dow === 0;
+                                  const prevActive = di > 0 && isTaskActiveFn(timing, ganttDays[di - 1]);
+                                  const isFirst = active && !prevActive;
+                                  return (
+                                    <td key={di} style={{
+                                      width: 18, minWidth: 18, height: 32,
+                                      borderRight: endOfWeek ? "1px solid #2a2a2a" : undefined,
+                                      backgroundColor: active
+                                        ? isWeekend ? `${faseColor}22` : `${faseColor}40`
+                                        : isToday ? "#F5C20008" : undefined,
+                                      boxShadow: isFirst ? `inset 2px 0 0 ${faseColor}` : undefined,
+                                    }} />
+                                  );
+                                })}
                               </tr>
                             );
                           })}
-                        </tbody>
-                      </table>
-                      <button onClick={() => addTT(fase)}
-                        className="w-full py-2 text-[10px] text-[#3a3a3a] hover:text-[#6b6b6b] transition-colors text-center border-t border-[#1a1a1a]">
-                        + agregar tarea
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

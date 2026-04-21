@@ -104,8 +104,6 @@ export async function fetchProyectos(): Promise<Proyecto[]> {
     do {
       const url = new URL(`https://api.airtable.com/v0/${BASE}/${TABLE}`);
       url.searchParams.set("pageSize", "100");
-      url.searchParams.set("sort[0][field]", "Fecha de creación");
-      url.searchParams.set("sort[0][direction]", "desc");
       if (offset) url.searchParams.set("offset", offset);
       const res = await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${TOKEN}` },
